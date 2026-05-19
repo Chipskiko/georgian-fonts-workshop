@@ -1,0 +1,162 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { writeFile, unlink } from "node:fs/promises";
+import path from "node:path";
+
+/**
+ * Storage adapter for workshop fonts.
+ *
+ * - In local dev (no BLOB_READ_WRITE_TOKEN): reads/writes from public/fonts/
+ *   so existing behaviour is unchanged.
+ * - On Vercel (BLOB_READ_WRITE_TOKEN present): reads/writes via @vercel/blob,
+ *   since the production filesystem is read-only.
+ *
+ * Both adapters return the same shape, so callers don't care which is in use.
+ */
+
+export type StoredFont = {
+  filename: string;
+  /** URL or path the browser uses to fetch the font (used in @font-face). */
+  publicUrl: string;
+  /** Bytes for downstream use (e.g. embedding into SVG); lazy-fetched on demand. */
+  fetchBytes: () => Promise<Uint8Array>;
+};
+
+const ALLOWED_EXT = new Set([".ttf", ".otf", ".woff", ".woff2"]);
+const FONT_DIR_FS = path.join(process.cwd(), "public", "fonts");
+const BLOB_PREFIX = "fonts/";
+
+function useBlob(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+// --- Local FS adapter ----------------------------------------------------
+
+function listFs(): StoredFont[] {
+  if (!existsSync(FONT_DIR_FS)) return [];
+  const entries = readdirSync(FONT_DIR_FS, { withFileTypes: true });
+  const out: StoredFont[] = [];
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    const ext = path.extname(e.name).toLowerCase();
+    if (!ALLOWED_EXT.has(ext)) continue;
+    out.push({
+      filename: e.name,
+      publicUrl: `/fonts/${encodeURIComponent(e.name)}`,
+      fetchBytes: async () => new Uint8Array(readFileSync(path.join(FONT_DIR_FS, e.name))),
+    });
+  }
+  return out;
+}
+
+async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
+  const dest = path.join(FONT_DIR_FS, filename);
+  if (path.relative(FONT_DIR_FS, dest).startsWith("..")) {
+    throw new Error("invalid font filename");
+  }
+  await writeFile(dest, Buffer.from(bytes));
+  return {
+    filename,
+    publicUrl: `/fonts/${encodeURIComponent(filename)}`,
+    fetchBytes: async () => new Uint8Array(readFileSync(dest)),
+  };
+}
+
+async function deleteFs(filename: string): Promise<void> {
+  const safe = path.basename(filename);
+  if (!safe || safe !== filename) throw new Error("invalid filename");
+  const ext = path.extname(safe).toLowerCase();
+  if (!ALLOWED_EXT.has(ext)) throw new Error("not a font file");
+  const dest = path.join(FONT_DIR_FS, safe);
+  if (path.relative(FONT_DIR_FS, dest).startsWith("..")) throw new Error("invalid path");
+  await unlink(dest);
+}
+
+function dedupeFs(filename: string): string {
+  if (!existsSync(path.join(FONT_DIR_FS, filename))) return filename;
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${base}_${n}${ext}`;
+    if (!existsSync(path.join(FONT_DIR_FS, candidate))) return candidate;
+  }
+  return `${base}_${Date.now()}${ext}`;
+}
+
+// --- Vercel Blob adapter -------------------------------------------------
+// Lazy-required so dev environments without @vercel/blob can still build.
+
+async function listBlob(): Promise<StoredFont[]> {
+  const { list } = await import("@vercel/blob");
+  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  return blobs
+    .filter((b) => ALLOWED_EXT.has(path.extname(b.pathname).toLowerCase()))
+    .map((b) => {
+      const filename = b.pathname.replace(BLOB_PREFIX, "");
+      return {
+        filename,
+        publicUrl: b.url,
+        fetchBytes: async () => {
+          const r = await fetch(b.url);
+          return new Uint8Array(await r.arrayBuffer());
+        },
+      };
+    });
+}
+
+async function saveBlob(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
+  const { put } = await import("@vercel/blob");
+  const blob = await put(`${BLOB_PREFIX}${filename}`, Buffer.from(bytes), {
+    access: "public",
+    addRandomSuffix: false,
+    contentType: "font/ttf",
+  });
+  return {
+    filename,
+    publicUrl: blob.url,
+    fetchBytes: async () => {
+      const r = await fetch(blob.url);
+      return new Uint8Array(await r.arrayBuffer());
+    },
+  };
+}
+
+async function deleteBlob(filename: string): Promise<void> {
+  const { del, list } = await import("@vercel/blob");
+  // Find the exact URL for this filename — Blob delete is by URL, not path
+  const { blobs } = await list({ prefix: `${BLOB_PREFIX}${filename}` });
+  const target = blobs.find((b) => b.pathname === `${BLOB_PREFIX}${filename}`);
+  if (!target) return;
+  await del(target.url);
+}
+
+async function dedupeBlob(filename: string): Promise<string> {
+  const { list } = await import("@vercel/blob");
+  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  const taken = new Set(blobs.map((b) => b.pathname.replace(BLOB_PREFIX, "")));
+  if (!taken.has(filename)) return filename;
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${base}_${n}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}_${Date.now()}${ext}`;
+}
+
+// --- Public API ----------------------------------------------------------
+
+export async function listFonts(): Promise<StoredFont[]> {
+  return useBlob() ? await listBlob() : listFs();
+}
+
+export async function saveFont(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
+  return useBlob() ? await saveBlob(filename, bytes) : await saveFs(filename, bytes);
+}
+
+export async function deleteFont(filename: string): Promise<void> {
+  return useBlob() ? await deleteBlob(filename) : await deleteFs(filename);
+}
+
+export async function dedupeFontFilename(filename: string): Promise<string> {
+  return useBlob() ? await dedupeBlob(filename) : dedupeFs(filename);
+}
