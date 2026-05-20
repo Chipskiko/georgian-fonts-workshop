@@ -20,7 +20,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <div id="navigation">
           <div id="info">
             <Link className="infoButtons" href="/">
-              georgian fonts
+              ხარახლოპია
             </Link>
             <Link className="titleButtons" href="/add">
               დაამატე
