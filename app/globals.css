@@ -769,13 +769,20 @@ p {
   position: relative;
   overflow: hidden;
   border: 2px solid var(--fg);
-  cursor: text;
+  /* Grab hand by default (you can pick up letters); switches to grabbing
+     while the pointer is held down. Typing still happens via the global
+     key listener — cursor only hints at the click-interaction. */
+  cursor: grab;
   flex-shrink: 0;
   /* Drag-to-pin: stop mobile from interpreting touches as scroll/zoom,
      and stop accidental text selection during the grab. */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.cascade-a4-stage:active {
+  cursor: grabbing;
 }
 
 .cascade-save-btn {

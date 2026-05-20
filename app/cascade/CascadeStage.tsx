@@ -42,8 +42,16 @@ type Letter = {
   body: Matter.Body;
   char: string;
   fontId: string;
+  /** Current visual size (px). Equals baseSize * SCALES[scaleLevel]. */
   size: number;
+  /** Size when the letter was first spawned. Cycling resets back to this. */
+  baseSize: number;
+  /** Index into SCALES — 0=original, 1=1.5x, 2=2x, then wraps back to 0. */
+  scaleLevel: number;
 };
+
+// Double-click cycles letter size through these multipliers, then wraps.
+const SCALES = [1.0, 1.5, 2.0];
 
 // Module-level singleton so engine + letters survive component remounts
 // (e.g. navigating between routes within the same tab). Cleared on
@@ -101,17 +109,6 @@ function createEngine(): Matter.Engine {
   return engine;
 }
 
-function isFull(): boolean {
-  if (runtime.letters.length === 0) return false;
-  // Full when any settled letter is touching the top boundary.
-  return runtime.letters.some(
-    (l) =>
-      l.body.position.y > 0 &&
-      Math.abs(l.body.velocity.y) < 1.5 &&
-      l.body.position.y - l.size * 0.42 < FULL_TOP_THRESHOLD,
-  );
-}
-
 function spawnLetter(char: string, fontId: string) {
   if (!runtime.engine) return;
   const size = LETTER_SIZE;
@@ -126,7 +123,43 @@ function spawnLetter(char: string, fontId: string) {
   Matter.Body.setVelocity(body, { x: (Math.random() - 0.5) * 2, y: 1 });
   Matter.Body.setAngularVelocity(body, (Math.random() - 0.5) * 0.05);
   Matter.Composite.add(runtime.engine.world, body);
-  runtime.letters.push({ id: runtime.nextId++, body, char, fontId, size });
+  runtime.letters.push({
+    id: runtime.nextId++,
+    body,
+    char,
+    fontId,
+    size,
+    baseSize: size,
+    scaleLevel: 0,
+  });
+}
+
+/** Cycle a letter through SCALES. Body is replaced with a same-properties
+ * one at the new radius — Matter.Body.scale leaves quirky mass/inertia
+ * state, so a clean rebuild is safer. Position, angle and static-ness
+ * are preserved. */
+function scaleUpLetter(letter: Letter) {
+  if (!runtime.engine) return;
+  const nextLevel = (letter.scaleLevel + 1) % SCALES.length;
+  const newSize = letter.baseSize * SCALES[nextLevel];
+  const newRadius = newSize * 0.42;
+  const wasStatic = letter.body.isStatic;
+  const px = letter.body.position.x;
+  const py = letter.body.position.y;
+  const angle = letter.body.angle;
+  Matter.Composite.remove(runtime.engine.world, letter.body);
+  const newBody = Matter.Bodies.circle(px, py, newRadius, {
+    restitution: 0.3,
+    friction: 0.3,
+    frictionAir: 0.005,
+    density: 0.001,
+    isStatic: wasStatic,
+  });
+  Matter.Body.setAngle(newBody, angle);
+  Matter.Composite.add(runtime.engine.world, newBody);
+  letter.body = newBody;
+  letter.size = newSize;
+  letter.scaleLevel = nextLevel;
 }
 
 function removeLast() {
@@ -176,15 +209,11 @@ export function CascadeStage({
     offsetX: number;
     offsetY: number;
   }>({ letterId: null, offsetX: 0, offsetY: 0 });
-  // Refs for values the RAF loop reads — avoids loop restarts on every change.
+  // Refs for values read inside saveAndReset / handlers — keeping them in
+  // refs means the inner functions don't capture stale state.
   const currentFontIdRef = useRef(currentFontId);
   const bgRef = useRef(bg);
   const fgRef = useRef(fg);
-  // Mirror save status to a ref so the RAF loop sees the latest value without
-  // restarting on every change. Auto-save only re-fires when status is "idle"
-  // — prevents retry storms when an error toast is showing and prevents
-  // double-saves during the success-toast window.
-  const saveStatusRef = useRef<SaveStatus>(saveStatus);
   useEffect(() => {
     currentFontIdRef.current = currentFontId;
   }, [currentFontId]);
@@ -194,9 +223,6 @@ export function CascadeStage({
   useEffect(() => {
     fgRef.current = fg;
   }, [fg]);
-  useEffect(() => {
-    saveStatusRef.current = saveStatus;
-  }, [saveStatus]);
 
   async function ensureFontFaceLoaded(font: FontEntry) {
     if (runtime.loadedFontFaceIds.has(font.id)) return;
@@ -272,11 +298,9 @@ export function CascadeStage({
       ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
     }
     if (!ALPHABET_SET.has(ch)) return;
-    if (isFull()) {
-      // Already brimming — instead of accepting another letter, save it.
-      void saveAndReset();
-      return;
-    }
+    // No auto-save when full — user decides when to save via the შენახვა
+    // button. Letters can keep being typed; they'll just squeeze at the
+    // top of the pile.
     const fontId = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
     if (!fontId) return;
     spawnLetter(ch, fontId);
@@ -368,6 +392,28 @@ export function CascadeStage({
     dragRef.current = { letterId: null, offsetX: 0, offsetY: 0 };
   }
 
+  /** Double-click cycles the letter under the pointer through SCALES.
+   * The first click of the pair pins the letter (via pointerdown), so
+   * resized letters end up static — the user is composing intentionally. */
+  function handleDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
+    const p = pointerToPhysics(e.clientX, e.clientY);
+    if (!p) return;
+    let hit: Letter | undefined;
+    for (let i = runtime.letters.length - 1; i >= 0; i--) {
+      const l = runtime.letters[i];
+      const dx = l.body.position.x - p.x;
+      const dy = l.body.position.y - p.y;
+      if (Math.hypot(dx, dy) <= l.size * 0.42) {
+        hit = l;
+        break;
+      }
+    }
+    if (!hit) return;
+    e.preventDefault();
+    scaleUpLetter(hit);
+    setTick((n) => (n + 1) % 1_000_000);
+  }
+
   useEffect(() => {
     if (!dynamicStyleRef.current) {
       const el = document.createElement("style");
@@ -383,16 +429,6 @@ export function CascadeStage({
 
     const loop = () => {
       if (runtime.engine) Matter.Engine.update(runtime.engine, 16, 1);
-      // Auto-trigger save when the poster fills up naturally (without
-      // the user pressing another key). Only fire when idle so we don't
-      // retry-storm a failing upload or double-save during the success toast.
-      if (
-        !savingInFlightRef.current &&
-        saveStatusRef.current === "idle" &&
-        isFull()
-      ) {
-        void saveAndReset();
-      }
       setTick((n) => (n + 1) % 1_000_000);
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -508,6 +544,7 @@ export function CascadeStage({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onDoubleClick={handleDoubleClick}
         >
           {runtime.letters.map((l) => (
             <span
