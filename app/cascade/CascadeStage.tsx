@@ -65,7 +65,7 @@ const runtime: CascadeRuntime = {
 
 function createEngine(): Matter.Engine {
   const engine = Matter.Engine.create({
-    gravity: { x: 0, y: 1.2 },
+    gravity: { x: 0, y: 0.6 },
     enableSleeping: false,
   });
   const T = 200;
