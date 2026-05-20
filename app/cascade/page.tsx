@@ -1,7 +1,11 @@
-import { getFonts } from "@/lib/fonts";
+import { getFonts, fontFaceCss } from "@/lib/fonts";
 import { CascadeStage } from "./CascadeStage";
 
 export default async function CascadePage() {
   const fonts = await getFonts();
-  return <CascadeStage fontIds={fonts.map((f) => f.id)} />;
+  return (
+    <div id="contents">
+      <CascadeStage initialFonts={fonts} cssFontFaces={fontFaceCss(fonts)} />
+    </div>
+  );
 }

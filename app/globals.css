@@ -610,43 +610,45 @@ p {
   cursor: wait;
 }
 
-.posterizer {
-  width: 100%;
-  border-top: solid var(--fg);
+/* === Cascade (the maker) and shared poster bits ===
+   Letters, the off-screen keyboard input, color pickers, font picker,
+   and the fonts-used list are reused by cascade. */
+
+.poster-letter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-block;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  will-change: transform;
+  transform-origin: center;
 }
 
-.posters-row {
-  display: flex;
-  gap: 32px;
-  padding: 32px 24px 60px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  justify-content: safe center;
-  scroll-snap-type: x mandatory;
+/* Off-screen keyboard input. Stays focused so typing always reaches
+   handleKeyDown, but is invisible and doesn't take layout space. */
+.poster-key-input {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.poster-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex-shrink: 0;
-  scroll-snap-align: center;
-}
-
-.poster-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.poster-instruction {
   font-family: var(--ui-georgian);
-  font-size: 0.9em;
-  color: var(--fg);
   text-transform: lowercase;
+  font-size: 1em;
+  margin: 0 0 12px 0;
+  color: var(--fg);
 }
 
-.poster-pct {
-  min-width: 3.5ch;
-  font-variant-numeric: tabular-nums;
-  font-size: 1.05em;
+.poster-instruction a {
+  color: var(--fg);
+  text-decoration: underline;
 }
 
 .poster-color {
@@ -676,144 +678,10 @@ p {
   border: none;
 }
 
-.poster-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: var(--fg);
-  color: var(--bg);
-  border: 1px solid var(--fg);
-  cursor: pointer;
-  padding: 0;
-}
-
-.poster-icon-btn + .poster-icon-btn {
-  margin-left: 4px;
-}
-
-.poster-icon-btn:first-of-type {
-  margin-left: auto;
-}
-
-.poster-icon-btn:hover {
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.poster-spacing {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 90px;
-  height: 6px;
-  background: transparent;
-  border: 1px solid var(--fg);
-  margin: 0 0 0 6px;
-  cursor: pointer;
-}
-
-.poster-spacing::-webkit-slider-runnable-track {
-  height: 6px;
-  background: var(--bg-tint);
-}
-.poster-spacing::-moz-range-track {
-  height: 6px;
-  background: var(--bg-tint);
-}
-
-.poster-spacing::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  background: var(--fg);
-  border: 1px solid var(--fg);
-  margin-top: -5px;
-  cursor: grab;
-}
-.poster-spacing::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  background: var(--fg);
-  border: 1px solid var(--fg);
-  cursor: grab;
-}
-
-.a3-poster {
-  position: relative;
-  overflow: hidden;
-  border: 2px solid var(--fg);
-}
-
-.poster-letter {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: inline-block;
-  line-height: 1;
-  pointer-events: none;
-  user-select: none;
-  will-change: transform;
-  transform-origin: center;
-}
-
-/* Off-screen keyboard input. Stays focused so typing always reaches
-   handleKeyDown, but is invisible and doesn't take layout space. */
-.poster-key-input {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* One-line hint shown above the posters row. */
-.poster-instruction {
-  font-family: var(--ui-georgian);
-  text-transform: lowercase;
-  font-size: 1em;
-  margin: 0 0 12px 0;
-  color: var(--fg);
-}
-
-.poster-instruction a {
-  color: var(--fg);
-  text-decoration: underline;
-}
-
-/* Active poster gets a subtle outline so users know which one their
-   typing goes to. */
-.poster-active .a3-poster {
-  outline: 3px dashed var(--fg);
-  outline-offset: 4px;
-}
-
-/* "გაივსო" badge — sits in the middle-top of a full poster */
-.poster-full-badge {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-family: var(--ui-georgian);
-  font-size: 1.4em;
-  text-transform: lowercase;
-  background: var(--fg);
-  color: var(--bg);
-  padding: 4px 12px;
-  border: 2px solid var(--bg);
-  pointer-events: none;
-  letter-spacing: 0.05em;
-}
-
-/* Font selector under the active poster */
 .poster-font-picker {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
   font-family: var(--ui-georgian);
   text-transform: lowercase;
   font-size: 0.95em;
@@ -829,7 +697,7 @@ p {
   cursor: pointer;
 }
 
-/* Fonts-used list under each poster */
+/* Fonts-used list under the cascade stage */
 .poster-fonts-used {
   list-style: none;
   padding: 0;
@@ -843,31 +711,218 @@ p {
   max-width: 420px;
 }
 
-/* Add-poster button — yellow square with a big pink + */
-.poster-add-btn {
-  flex: 0 0 auto;
-  width: 96px;
-  height: 96px;
-  align-self: center;
-  background: var(--fg);
+/* --- Cascade page layout --- */
+
+.cascade-page {
+  width: 100%;
+  border-top: solid var(--fg);
+  padding: 18px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.cascade-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  font-family: var(--ui-georgian);
+  text-transform: lowercase;
+  color: var(--fg);
+}
+
+.cascade-stage-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  /* On phones the A4 stage (420px) is wider than viewport — allow scroll
+     rather than clipping or shrinking the physics simulation. */
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.cascade-a4-stage {
+  position: relative;
+  overflow: hidden;
   border: 2px solid var(--fg);
+  cursor: text;
+  flex-shrink: 0;
+}
+
+.cascade-save-btn {
+  font-family: var(--ui-georgian);
+  font-size: 1.1em;
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  padding: 6px 16px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.cascade-save-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cascade-toast {
+  font-family: var(--ui-georgian);
+  text-transform: lowercase;
+  font-size: 1.1em;
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px dashed var(--fg);
+  background: var(--bg-tint);
+  color: var(--fg);
+}
+
+.cascade-toast a {
+  text-decoration: underline;
+}
+
+.cascade-toast-err {
+  background: var(--bg);
+  border-style: solid;
+}
+
+/* === Gallery (saved posters) === */
+
+.gallery {
+  border-top: solid var(--fg);
+  padding: 24px 20px 60px;
+}
+
+.gallery-empty {
+  font-family: var(--ui-georgian);
+  text-transform: lowercase;
+  font-size: 1.2em;
+  padding: 30px 0;
+  text-align: center;
+}
+
+.gallery-empty a {
+  text-decoration: underline;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 24px;
+}
+
+.gallery-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--fg);
+  background: var(--bg-tint);
+  padding: 8px;
+}
+
+.gallery-tile-img-btn {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.gallery-tile-img-btn img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 210 / 297;
+  object-fit: contain;
+  background: #fff;
+}
+
+.gallery-tile-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--ui-georgian);
+  text-transform: lowercase;
+  font-size: 0.95em;
+}
+
+.gallery-download {
+  text-decoration: underline;
+}
+
+.gallery-delete,
+.gallery-confirm,
+.gallery-cancel {
+  font-family: var(--ui-georgian);
+  font-size: 0.9em;
+  border: 1px solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 2px 8px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.gallery-confirm {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.gallery-confirm-row {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.gallery-delete:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.gallery-err {
+  margin: 12px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--fg);
+  background: var(--bg);
+  text-decoration: underline;
+}
+
+.gallery-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  padding: 20px;
+}
+
+.gallery-lightbox img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  cursor: default;
+  background: #fff;
+  border: 2px solid var(--fg);
+}
+
+.gallery-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font: inherit;
+  font-size: 1.4em;
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  width: 36px;
+  height: 36px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  margin: 0 8px;
-}
-
-.poster-add-btn:hover:not(:disabled) {
-  background: transparent;
-}
-
-.poster-add-btn:hover:not(:disabled) svg line {
-  stroke: var(--fg);
-}
-
-.poster-add-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
 }

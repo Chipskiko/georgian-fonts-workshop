@@ -1,11 +1,13 @@
-import { getFonts, fontFaceCss } from "@/lib/fonts";
-import { Posterizer } from "./Posterizer";
+import { listPosters } from "@/lib/poster-storage";
+import { Gallery } from "./Gallery";
+
+export const dynamic = "force-dynamic";
 
 export default async function PosterizerPage() {
-  const fonts = await getFonts();
+  const posters = await listPosters();
   return (
     <div id="contents">
-      <Posterizer initialFonts={fonts} cssFontFaces={fontFaceCss(fonts)} />
+      <Gallery initialPosters={posters} />
     </div>
   );
 }
