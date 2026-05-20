@@ -168,10 +168,12 @@ export function Posterizer({
 
   function addNewPoster() {
     // Finalise the current (last) poster, then create a new active one
-    // inheriting its colours + font.
+    // inheriting its colours + font. Use the live polled font list for
+    // the fallback so fonts uploaded during the session are available
+    // even if they weren't in the initial server render.
     const current = posterizerState.posters[posterizerState.posters.length - 1];
     if (current) current.finalized = true;
-    const fontId = current?.currentFontId ?? initialFonts[0]?.id ?? null;
+    const fontId = current?.currentFontId ?? allFontsRef.current[0]?.id ?? null;
     const fresh = createPoster(fontId);
     if (current) {
       fresh.bg = current.bg;
@@ -179,8 +181,12 @@ export function Posterizer({
     }
     posterizerState.posters.push(fresh);
     setTick((n) => (n + 1) % 1_000_000);
-    // Focus the keyboard input so typing continues
+    // Re-focus so the user can start typing into the new poster right away
     setTimeout(() => keyInputRef.current?.focus(), 50);
+  }
+
+  function refocusInput() {
+    keyInputRef.current?.focus();
   }
 
   async function ensureFontFaceLoaded(font: FontEntry) {
@@ -210,10 +216,12 @@ export function Posterizer({
       setTick((n) => (n + 1) % 1_000_000);
       return;
     }
-    // Accept Georgian letters only
+    // Accept Georgian letters only. preventDefault on EVERY key so the
+    // hidden input never accumulates text (controlled input forces value=""
+    // anyway but preventDefault avoids the round-trip and any flicker).
+    e.preventDefault();
     const ch = e.key;
     if (!ALPHABET_SET.has(ch)) return;
-    e.preventDefault();
     if (active.finalized || isPosterFull(active)) {
       active.finalized = true;
       setTick((n) => (n + 1) % 1_000_000);
@@ -225,8 +233,20 @@ export function Posterizer({
     setTick((n) => (n + 1) % 1_000_000);
   }
 
-  function refocusInput() {
-    keyInputRef.current?.focus();
+  /** Focus the keyboard input ONLY when the user clicks on the poster
+   * canvas itself (not on controls). Clicking color pickers, font
+   * selector, or download button must NOT steal their focus or our
+   * refocus would close the picker/dropdown immediately.
+   *
+   * Matching is done via closest('.a3-poster') so the whole poster
+   * (including the canvas + the letter spans inside it) is a click target. */
+  function handlePosterizerClick(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement;
+    // If the click is on or inside the actual poster canvas, refocus.
+    // Otherwise leave focus where the user put it.
+    if (target.closest(".a3-poster")) {
+      keyInputRef.current?.focus();
+    }
   }
 
   useEffect(() => {
@@ -298,7 +318,8 @@ export function Posterizer({
       }
     }, POLL_INTERVAL_MS);
 
-    // Auto-focus the keyboard input on mount and on any click in the page
+    // Auto-focus the keyboard input on mount so typing works without
+    // the user having to click anywhere first.
     setTimeout(() => keyInputRef.current?.focus(), 50);
 
     return () => {
@@ -314,21 +335,22 @@ export function Posterizer({
   const noFontsYet = allFonts.length === 0;
 
   return (
-    <div className="posterizer" onClick={refocusInput}>
+    <div className="posterizer" onClick={handlePosterizerClick}>
       <style dangerouslySetInnerHTML={{ __html: cssFontFaces }} />
 
-      {/* Off-screen input that captures all keystrokes. Stays focused
-          so typing always goes to the active poster. */}
+      {/* Off-screen input that captures keystrokes. We do NOT auto-refocus
+          on blur — that would fight the color picker and font selector
+          (they'd close every time they tried to take focus). Instead, the
+          user reclaims focus by clicking on the poster canvas. */}
       <input
         ref={keyInputRef}
         type="text"
         className="poster-key-input"
         onKeyDown={handleKeyDown}
-        onBlur={() => setTimeout(refocusInput, 0)}
         aria-label="poster keyboard"
         autoComplete="off"
         spellCheck={false}
-        // Keep its value empty so it doesn't accumulate or echo
+        // Controlled to empty so typed chars never accumulate
         value=""
         onChange={() => {}}
       />
