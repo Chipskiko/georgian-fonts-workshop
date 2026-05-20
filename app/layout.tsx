@@ -25,9 +25,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link className="titleButtons" href="/add">
               დაამატე
             </Link>
-            <Link className="titleButtons" href="/make">
-              შექმენი
-            </Link>
             <Link className="titleButtons" href="/posterizer">
               პოსტერიზატორი
             </Link>
