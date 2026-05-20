@@ -25,11 +25,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link className="titleButtons" href="/add">
               დაამატე
             </Link>
-            <Link className="titleButtons" href="/posterizer">
+            <Link className="titleButtons" href="/cascade">
               პოსტერიზატორი
             </Link>
-            <Link className="titleButtons" href="/cascade">
-              კასკადი
+            <Link className="titleButtons" href="/posterizer">
+              გალერია
             </Link>
             <Link className="titleButtons" href="/">
               შრიფტები

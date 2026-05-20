@@ -288,9 +288,7 @@ export function MakeFontForm() {
     <>
       <p className="add-blurb make-blurb">
         1. <a href="/api/template" download className="make-link">გადმოწერე ტემპლეიტი</a>{" "}
-        (a4 pdf).{" "}
-        2. ჩაწერე თითოეული ასო თავის უჯრაში.{" "}
-        3. ააწიე / დაასკანერე და ატვირთე აქ.
+        (a4 pdf). 2. დაბეჭდე. 3. შეავსე. 4. ატვირთე.
       </p>
 
       {!preview ? (

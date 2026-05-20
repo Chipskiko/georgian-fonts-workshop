@@ -34,8 +34,8 @@ const CEILING_Y = -4;
 const FULL_TOP_THRESHOLD = SPAWN_TOP_Y + 4;
 const POLL_INTERVAL_MS = 3000;
 
-const DEFAULT_BG = "#ffea00";
-const DEFAULT_FG = "#ff10b8";
+const DEFAULT_BG = "#ffffff";
+const DEFAULT_FG = "#000000";
 
 type Letter = {
   id: number;
@@ -410,7 +410,7 @@ export function CascadeStage({
         </div>
       )}
 
-      <div className="cascade-stage-wrap">
+      <div className="cascade-a4-stage-wrap">
         <div
           ref={stageRef}
           className="cascade-a4-stage"

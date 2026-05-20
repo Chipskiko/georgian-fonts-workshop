@@ -63,7 +63,7 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
     <div className="gallery">
       {posters.length === 0 ? (
         <p className="gallery-empty">
-          ჯერ პოსტერი არ არის — შექმენი ერთი <a href="/cascade">კასკადში</a>.
+          ჯერ პოსტერი არ არის — შექმენი ერთი <a href="/cascade">პოსტერიზატორში</a>.
         </p>
       ) : (
         <div className="gallery-grid">

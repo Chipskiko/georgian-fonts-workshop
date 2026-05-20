@@ -725,13 +725,34 @@ p {
 
 .cascade-controls {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 14px;
   flex-wrap: wrap;
   justify-content: center;
   font-family: var(--ui-georgian);
   text-transform: lowercase;
+  font-size: 0.95em;
   color: var(--fg);
+}
+
+/* Inline-controls sizing — every control row is 28px tall so labels line
+   up horizontally regardless of which control type sits next to them. */
+.cascade-controls .poster-color input[type="color"] {
+  width: 28px;
+  height: 28px;
+}
+
+.cascade-controls .poster-font-picker select {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.cascade-controls .poster-color,
+.cascade-controls .poster-font-picker {
+  font-size: 1em;
+  margin: 0;
 }
 
 .cascade-stage-wrap {
@@ -754,11 +775,13 @@ p {
 
 .cascade-save-btn {
   font-family: var(--ui-georgian);
-  font-size: 1.1em;
+  font-size: 1em;
   background: var(--fg);
   color: var(--bg);
   border: 1px solid var(--fg);
-  padding: 6px 16px;
+  height: 28px;
+  padding: 0 14px;
+  line-height: 1;
   cursor: pointer;
   text-transform: lowercase;
 }
