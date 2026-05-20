@@ -771,6 +771,11 @@ p {
   border: 2px solid var(--fg);
   cursor: text;
   flex-shrink: 0;
+  /* Drag-to-pin: stop mobile from interpreting touches as scroll/zoom,
+     and stop accidental text selection during the grab. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .cascade-save-btn {

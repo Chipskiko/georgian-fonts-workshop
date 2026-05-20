@@ -167,6 +167,15 @@ export function CascadeStage({
   const keyInputRef = useRef<HTMLInputElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const savingInFlightRef = useRef(false);
+  // Drag-to-pin state. When the user grabs a letter, we store its id +
+  // the pointer-to-body offset so the letter follows the pointer without
+  // jumping its center. Body is set static on grab and stays static on
+  // release — that's the "lock in place but still collides" behavior.
+  const dragRef = useRef<{
+    letterId: number | null;
+    offsetX: number;
+    offsetY: number;
+  }>({ letterId: null, offsetX: 0, offsetY: 0 });
   // Refs for values the RAF loop reads — avoids loop restarts on every change.
   const currentFontIdRef = useRef(currentFontId);
   const bgRef = useRef(bg);
@@ -282,6 +291,81 @@ export function CascadeStage({
     if (target.closest(".cascade-a4-stage")) {
       keyInputRef.current?.focus();
     }
+  }
+
+  // --- Drag-to-pin handlers ------------------------------------------
+  // Convert pointer client coords → physics coords. The stage uses fixed
+  // pixel dimensions equal to physics units, but CSS could scale it
+  // responsively, so we account for the bounding-rect ratio.
+  function pointerToPhysics(
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const rect = stage.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    return {
+      x: ((clientX - rect.left) * A4_WIDTH) / rect.width,
+      y: ((clientY - rect.top) * A4_HEIGHT) / rect.height,
+    };
+  }
+
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    const p = pointerToPhysics(e.clientX, e.clientY);
+    if (!p) return;
+    // Hit-test against letter circle bodies, newest-first so the top of
+    // the visual stack is grabbed when letters overlap.
+    let hit: Letter | undefined;
+    for (let i = runtime.letters.length - 1; i >= 0; i--) {
+      const l = runtime.letters[i];
+      const dx = l.body.position.x - p.x;
+      const dy = l.body.position.y - p.y;
+      if (Math.hypot(dx, dy) <= l.size * 0.42) {
+        hit = l;
+        break;
+      }
+    }
+    if (!hit) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // Freeze the letter in place while dragging. Static bodies still
+    // collide with dynamic letters — exactly what the user asked for.
+    Matter.Body.setStatic(hit.body, true);
+    dragRef.current = {
+      letterId: hit.id,
+      offsetX: hit.body.position.x - p.x,
+      offsetY: hit.body.position.y - p.y,
+    };
+  }
+
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (dragRef.current.letterId === null) return;
+    const p = pointerToPhysics(e.clientX, e.clientY);
+    if (!p) return;
+    const letter = runtime.letters.find((l) => l.id === dragRef.current.letterId);
+    if (!letter) return;
+    const radius = letter.size * 0.42;
+    // Clamp to stage bounds so the user can't drag a letter off-canvas
+    const x = Math.max(
+      radius,
+      Math.min(A4_WIDTH - radius, p.x + dragRef.current.offsetX),
+    );
+    const y = Math.max(
+      radius,
+      Math.min(A4_HEIGHT - radius, p.y + dragRef.current.offsetY),
+    );
+    Matter.Body.setPosition(letter.body, { x, y });
+  }
+
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (dragRef.current.letterId === null) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    // Body stays static — that's the lock. Re-grabbing works because
+    // handlePointerDown's hit-test catches static bodies too.
+    dragRef.current = { letterId: null, offsetX: 0, offsetY: 0 };
   }
 
   useEffect(() => {
@@ -420,6 +504,10 @@ export function CascadeStage({
             background: bg,
             color: fg,
           }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
         >
           {runtime.letters.map((l) => (
             <span
