@@ -861,11 +861,30 @@ p {
   overflow: hidden;
   border: 2px solid var(--fg);
   flex-shrink: 0;
+  /* Desktop sizing — A4 portrait. Pointer events scale to physics via
+     getBoundingClientRect, so any CSS-driven resize Just Works for
+     input. saveAndReset reads actual rendered width to set the capture
+     scale so saved PNG stays print-resolution regardless of viewport. */
+  width: 420px;
+  height: 594px;
   /* Stop mobile from interpreting touches as scroll/zoom, and stop
      accidental text selection during drag/draw/erase strokes. */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* On phones, A4 (420×594) is taller than the available viewport once
+   Safari toolbar + nav + controls have taken their share — the bottom
+   of the stage was getting clipped. Shrink to fit while keeping A4
+   aspect. dvh (dynamic viewport height) accounts for iOS Safari's
+   collapsing toolbar; vh would overshoot. */
+@media (max-width: 700px) {
+  .cascade-a4-stage {
+    width: min(calc(100vw - 32px), calc((100dvh - 300px) * 210 / 297));
+    height: auto;
+    aspect-ratio: 210 / 297;
+  }
 }
 
 /* Cursor varies by active tool. Custom SVG cursors (yellow + black

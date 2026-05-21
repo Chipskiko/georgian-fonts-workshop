@@ -249,18 +249,27 @@ export function CascadeStage({
   async function ensureFontFaceLoaded(font: FontEntry) {
     if (runtime.loadedFontFaceIds.has(font.id)) return;
     runtime.loadedFontFaceIds.add(font.id);
+    // ALWAYS inject the @font-face into the dynamic stylesheet.
+    // html2canvas-pro parses CSS @font-face declarations to discover the
+    // font binary at snapshot time — it does NOT enumerate the
+    // document.fonts JS set. Fonts loaded only via the FontFace API
+    // render fine in the live cascade but get replaced with the fallback
+    // in the saved PNG, which was the "poster uses default font" bug.
+    if (dynamicStyleRef.current) {
+      dynamicStyleRef.current.appendChild(
+        document.createTextNode(
+          `@font-face{font-family:"${font.id}";src:url("${font.file}") format("${font.format}");font-display:swap;}`,
+        ),
+      );
+    }
+    // Also fire the FontFace API so document.fonts.ready resolves
+    // before we snapshot — the CSS path alone is fire-and-forget.
     try {
       const ff = new FontFace(font.id, `url("${font.file}") format("${font.format}")`);
       const loaded = await ff.load();
       document.fonts.add(loaded);
     } catch {
-      if (dynamicStyleRef.current) {
-        dynamicStyleRef.current.appendChild(
-          document.createTextNode(
-            `@font-face{font-family:"${font.id}";src:url("${font.file}") format("${font.format}");font-display:swap;}`,
-          ),
-        );
-      }
+      // CSS path is sufficient on its own.
     }
   }
 
@@ -273,10 +282,14 @@ export function CascadeStage({
     try {
       await document.fonts.ready;
       const html2canvas = (await import("html2canvas-pro")).default;
+      // Compute scale from the actual rendered width — the stage is
+      // responsive on mobile (smaller than A4_WIDTH), so a fixed scale
+      // would produce undersized PNGs on phones.
+      const rect = stageRef.current.getBoundingClientRect();
+      const captureScale = SAVE_PX_W / (rect.width || A4_WIDTH);
       const canvas = await html2canvas(stageRef.current, {
         backgroundColor: bgRef.current,
-        // Capture at print resolution so saved poster is print-ready
-        scale: SAVE_PX_W / A4_WIDTH,
+        scale: captureScale,
         logging: false,
         useCORS: true,
       });
@@ -777,8 +790,6 @@ export function CascadeStage({
           className="cascade-a4-stage"
           data-tool={tool}
           style={{
-            width: A4_WIDTH,
-            height: A4_HEIGHT,
             background: bg,
             color: fg,
           }}
@@ -789,13 +800,15 @@ export function CascadeStage({
           onDoubleClick={handleDoubleClick}
         >
           {/* Drawing canvas — sits behind letters so glyphs stay on top.
-              Buffer is at print resolution; CSS display matches stage. */}
+              Buffer is at print resolution; CSS display fills the stage
+              (which is responsive — 100% lets it shrink with the stage
+              on mobile while the buffer stays at print res). */}
           <canvas
             ref={drawCanvasRef}
             className="cascade-draw-canvas"
             width={SAVE_PX_W}
             height={SAVE_PX_H}
-            style={{ width: A4_WIDTH, height: A4_HEIGHT }}
+            style={{ width: "100%", height: "100%" }}
           />
           {runtime.letters.map((l) => (
             <span
