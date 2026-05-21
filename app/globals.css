@@ -873,15 +873,33 @@ p {
 }
 
 /* On phones, A4 (420×594) is taller than the available viewport once
-   Safari toolbar + nav + controls have taken their share — the bottom
-   of the stage was getting clipped. Shrink to fit while keeping A4
-   aspect. dvh (dynamic viewport height) accounts for iOS Safari's
-   collapsing toolbar; vh would overshoot. */
+   Safari toolbar + nav + controls have taken their share. Naively
+   shrinking via width/height left the layout box at one size while
+   physics still ran in a 420-unit coord space — letters spawned past
+   the visible right edge and disappeared (both on screen and in the
+   saved PNG, since html2canvas only captures visible pixels).
+   Use transform:scale instead — layout box stays 420×594 (physics +
+   spawn coords are unchanged), only the visual is shrunk. The wrap
+   reserves just the scaled height so content below sits flush. */
 @media (max-width: 700px) {
+  .cascade-a4-stage-wrap {
+    /* All three min() args must be unitless. CSS Values 4 gives
+       `length / length → number`, so divide by 420px / 594px (NOT
+       unitless 420 / 594) to keep types consistent. */
+    --cascade-scale: min(1, calc((100vw - 32px) / 420px), calc((100dvh - 300px) / 594px));
+    /* Wrap fits the SCALED visual exactly. The stage's layout box is
+       still 420×594 (so physics + spawn coords don't change), but the
+       wrap clips the layout-box overflow so the page doesn't gain a
+       horizontal scrollbar. */
+    width: calc(420px * var(--cascade-scale));
+    height: calc(594px * var(--cascade-scale));
+    overflow: hidden;
+  }
   .cascade-a4-stage {
-    width: min(calc(100vw - 32px), calc((100dvh - 300px) * 210 / 297));
-    height: auto;
-    aspect-ratio: 210 / 297;
+    /* transform-origin top-left anchors the visual at wrap (0,0); the
+       layout-box's right/bottom overflow is what the wrap clips. */
+    transform: scale(var(--cascade-scale));
+    transform-origin: top left;
   }
 }
 
