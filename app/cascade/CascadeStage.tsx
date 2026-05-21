@@ -19,14 +19,17 @@ const QWERTY_TO_GEORGIAN: Record<string, string> = {
 };
 
 // A4 portrait. Screen units == physics units (no scaling).
-// Print PNG output is computed at 300 DPI based on A4 mm dimensions.
+// Print PNG output is computed at 150 DPI based on A4 mm dimensions.
+// 150 DPI is the sweet spot for A4 home/office prints — visually
+// indistinguishable from 300 unless you put your nose on the paper —
+// while ~4× cheaper to render (html2canvas walks the DOM at this scale).
 const A4_WIDTH = 420;
 const A4_HEIGHT = Math.round(A4_WIDTH * Math.sqrt(2)); // 594
 const A4_MM_W = 210;
 const A4_MM_H = 297;
-const DPI = 300;
-const SAVE_PX_W = Math.round((A4_MM_W / 25.4) * DPI); // 2480
-const SAVE_PX_H = Math.round((A4_MM_H / 25.4) * DPI); // 3508
+const DPI = 150;
+const SAVE_PX_W = Math.round((A4_MM_W / 25.4) * DPI); // 1240
+const SAVE_PX_H = Math.round((A4_MM_H / 25.4) * DPI); // 1754
 
 const LETTER_SIZE = 56;
 const SPAWN_TOP_Y = 12;
