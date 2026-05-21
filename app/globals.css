@@ -778,16 +778,19 @@ p {
   -webkit-user-select: none;
 }
 
-/* Cursor varies by active tool — set via data-tool attribute. */
+/* Cursor varies by active tool. Custom SVG cursors (yellow + black
+   outline) match the toolbar icons and stay visible on both the white
+   poster and the pink page around it. Hotspot numbers are tuned per
+   icon: move centers on the hand, pencil tip is bottom-left, eraser
+   centers on the block. Fallbacks for browsers that reject the SVG. */
 .cascade-a4-stage[data-tool="move"] {
-  cursor: grab;
+  cursor: url("/cursors/move.svg") 16 16, grab;
 }
-.cascade-a4-stage[data-tool="move"]:active {
-  cursor: grabbing;
+.cascade-a4-stage[data-tool="pencil"] {
+  cursor: url("/cursors/pencil.svg") 3 29, crosshair;
 }
-.cascade-a4-stage[data-tool="pencil"],
 .cascade-a4-stage[data-tool="eraser"] {
-  cursor: crosshair;
+  cursor: url("/cursors/eraser.svg") 16 16, crosshair;
 }
 
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions

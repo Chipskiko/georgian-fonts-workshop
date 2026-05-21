@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Diagonal pencil. Tip at bottom-left (3, 29). Hotspot = (3, 29). -->
+  <!-- Body -->
+  <path d="M7 25 L23 9 L27 13 L11 29 Z"
+        fill="#ffea00" stroke="#000" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Eraser at top-right -->
+  <path d="M23 9 L25 7 L29 11 L27 13 Z"
+        fill="#ffea00" stroke="#000" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- Tip (pointed) -->
+  <path d="M7 25 L3 29 L11 29 Z"
+        fill="#000" stroke="#000" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>
