@@ -106,10 +106,21 @@ export async function computeScanLayout(buffer: Buffer): Promise<ScanLayout> {
     );
   }
 
-  const oriMeta = await sharp(buffer).rotate().metadata();
-  const oriW = oriMeta.width;
-  const oriH = oriMeta.height;
-  if (!oriW || !oriH) throw new Error("could not read image dimensions");
+  // sharp().rotate().metadata() returns the SOURCE metadata, not the
+  // post-rotation dimensions — so for iPhone portrait photos (landscape
+  // sensor, EXIF=6) it reports 4032×3024 while .rotate() in the actual
+  // pipeline produces 3024×4032 portrait pixels. If we naively use the
+  // source dims, the subsequent resize() target ends up landscape and
+  // jams the rotated portrait pixels in, squeezing them vertically.
+  // Read source dims + EXIF orientation, swap manually.
+  const srcMeta = await sharp(buffer).metadata();
+  const srcW = srcMeta.width;
+  const srcH = srcMeta.height;
+  if (!srcW || !srcH) throw new Error("could not read image dimensions");
+  const exifOri = srcMeta.orientation ?? 1;
+  const swapDims = exifOri >= 5 && exifOri <= 8;
+  const oriW = swapDims ? srcH : srcW;
+  const oriH = swapDims ? srcW : srcH;
 
   // Marker detection runs on a downscaled threshold. Working at ~1500px keeps
   // the connected-component scan fast while preserving 40+px markers.
@@ -613,10 +624,21 @@ export async function renderDetectionDebug(buffer: Buffer): Promise<{
   candidateCount: number;
   thresholdUsed: number;
 }> {
-  const oriMeta = await sharp(buffer).rotate().metadata();
-  const oriW = oriMeta.width;
-  const oriH = oriMeta.height;
-  if (!oriW || !oriH) throw new Error("could not read image dimensions");
+  // sharp().rotate().metadata() returns the SOURCE metadata, not the
+  // post-rotation dimensions — so for iPhone portrait photos (landscape
+  // sensor, EXIF=6) it reports 4032×3024 while .rotate() in the actual
+  // pipeline produces 3024×4032 portrait pixels. If we naively use the
+  // source dims, the subsequent resize() target ends up landscape and
+  // jams the rotated portrait pixels in, squeezing them vertically.
+  // Read source dims + EXIF orientation, swap manually.
+  const srcMeta = await sharp(buffer).metadata();
+  const srcW = srcMeta.width;
+  const srcH = srcMeta.height;
+  if (!srcW || !srcH) throw new Error("could not read image dimensions");
+  const exifOri = srcMeta.orientation ?? 1;
+  const swapDims = exifOri >= 5 && exifOri <= 8;
+  const oriW = swapDims ? srcH : srcW;
+  const oriH = swapDims ? srcW : srcH;
 
   const DETECT_W = 1500;
   const detectScale = DETECT_W / oriW;
@@ -1389,10 +1411,21 @@ export async function renderDebugView(
   const blur = clampN(params.blur ?? 0.7, 0, 5);
   const traceThreshold = clampN(params.traceThreshold ?? 180, 50, 250);
 
-  const oriMeta = await sharp(buffer).rotate().metadata();
-  const oriW = oriMeta.width;
-  const oriH = oriMeta.height;
-  if (!oriW || !oriH) throw new Error("could not read image dimensions");
+  // sharp().rotate().metadata() returns the SOURCE metadata, not the
+  // post-rotation dimensions — so for iPhone portrait photos (landscape
+  // sensor, EXIF=6) it reports 4032×3024 while .rotate() in the actual
+  // pipeline produces 3024×4032 portrait pixels. If we naively use the
+  // source dims, the subsequent resize() target ends up landscape and
+  // jams the rotated portrait pixels in, squeezing them vertically.
+  // Read source dims + EXIF orientation, swap manually.
+  const srcMeta = await sharp(buffer).metadata();
+  const srcW = srcMeta.width;
+  const srcH = srcMeta.height;
+  if (!srcW || !srcH) throw new Error("could not read image dimensions");
+  const exifOri = srcMeta.orientation ?? 1;
+  const swapDims = exifOri >= 5 && exifOri <= 8;
+  const oriW = swapDims ? srcH : srcW;
+  const oriH = swapDims ? srcW : srcH;
 
   const DETECT_W = 1500;
   const detectScale = DETECT_W / oriW;
