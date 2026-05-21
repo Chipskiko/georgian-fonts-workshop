@@ -756,12 +756,13 @@ p {
   margin: 0;
 }
 
-.cascade-stage-wrap {
+.cascade-a4-stage-wrap {
   display: flex;
-  justify-content: center;
+  /* `safe center` falls back to flex-start when the stage is wider than
+     the wrap, so the scrollbar can reach the left edge. Plain `center`
+     traps content at negative x and the left strip becomes unreachable. */
+  justify-content: safe center;
   width: 100%;
-  /* On phones the A4 stage (420px) is wider than viewport — allow scroll
-     rather than clipping or shrinking the physics simulation. */
   overflow-x: auto;
   padding-bottom: 4px;
 }
