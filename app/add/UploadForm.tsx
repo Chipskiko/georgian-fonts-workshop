@@ -52,12 +52,23 @@ export function UploadForm() {
           type="text"
           name="fontName"
           lang="ka"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           style={{ fontFamily: "var(--ui-georgian)" }}
         />
       </label>
       <label className="add-row">
         <span>ავტორი</span>
-        <input type="text" name="designer" />
+        <input
+          type="text"
+          name="designer"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+        />
       </label>
       <button type="submit" disabled={pending}>
         {pending ? "..." : "ატვირთე"}

@@ -777,18 +777,24 @@ p {
   height: 22px;
   padding: 0;
   border: 1px solid var(--fg);
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
 }
 
+/* iOS Safari styles color inputs with rounded native chrome unless we
+   also reset the inner swatch boxes. */
 .poster-color input[type="color"]::-webkit-color-swatch-wrapper {
   padding: 0;
+  border-radius: 0;
 }
 .poster-color input[type="color"]::-webkit-color-swatch {
   border: none;
+  border-radius: 0;
 }
 .poster-color input[type="color"]::-moz-color-swatch {
   border: none;
+  border-radius: 0;
 }
 
 .poster-font-picker {
@@ -801,13 +807,27 @@ p {
 }
 
 .poster-font-picker select {
+  /* iOS Safari renders <select> with rounded native chrome and a
+     dropdown arrow regardless of CSS — appearance:none strips both,
+     border-radius:0 then matches the square outline of the site. */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border-radius: 0;
   font-family: var(--ui-georgian);
   font-size: 1em;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--fg);
-  padding: 4px 8px;
+  padding: 4px 24px 4px 8px;
   cursor: pointer;
+  /* Replace the native arrow with a flat ▾ glyph so the affordance
+     isn't lost when appearance is reset. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%),
+    linear-gradient(135deg, var(--fg) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
 }
 
 /* Fonts-used list under the cascade stage */
@@ -857,7 +877,9 @@ p {
 
 .cascade-controls .poster-font-picker select {
   height: 28px;
-  padding: 0 8px;
+  /* Right padding reserves room for the custom dropdown arrow drawn
+     via background-image (see .poster-font-picker select above). */
+  padding: 0 22px 0 8px;
   font-size: 1em;
   line-height: 1;
 }

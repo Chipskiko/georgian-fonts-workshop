@@ -656,6 +656,8 @@ export function CascadeStage({
         onKeyDown={handleKeyDown}
         aria-label="cascade keyboard"
         autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
         spellCheck={false}
         value=""
         onChange={() => {}}
