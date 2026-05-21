@@ -14,10 +14,9 @@ import {
   cellLayoutPt,
 } from "./constants";
 
-// Placeholder URL the QR encodes. Update to the real deploy URL when the
-// site is hosted — participants scanning the QR will be taken straight
-// to the upload page.
-export const TEMPLATE_QR_URL = "https://georgian-fonts.app/make";
+// URL the QR encodes — participants scanning the QR on a filled-in
+// template land straight on the upload page.
+export const TEMPLATE_QR_URL = "https://georgian-fonts-workshop.vercel.app/add";
 // Index of the cell that hosts the QR (first cell after the alphabet ends).
 // 33 corresponds to row 5, col 3 in the 6×6 grid — the first empty slot.
 export const QR_CELL_INDEX = 33;
