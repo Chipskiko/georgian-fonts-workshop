@@ -265,6 +265,16 @@ p {
   line-height: 1.5;
 }
 
+.make-steps {
+  list-style-position: outside;
+  padding-left: 1.5em;
+  margin: 0;
+}
+
+.make-steps li {
+  margin: 2px 0;
+}
+
 .make-link {
   text-decoration: underline;
 }
@@ -463,6 +473,16 @@ p {
   align-items: center;
   gap: 12px;
   font-size: 1em;
+}
+
+/* On phones the 130px label column squeezes the input to ~190px and
+   long file names get clipped — stack vertically instead. */
+@media (max-width: 600px) {
+  .add-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 4px;
+  }
 }
 
 .add-row > span {

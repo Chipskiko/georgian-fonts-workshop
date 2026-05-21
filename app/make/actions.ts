@@ -10,7 +10,7 @@ import {
   type DebugViewResult,
 } from "@/lib/font-pipeline/process-scan";
 import { buildFont } from "@/lib/font-pipeline/build-font";
-import { saveFont, dedupeFontFilename } from "@/lib/font-storage";
+import { saveFont } from "@/lib/font-storage";
 import { generateCalibrationPng } from "@/lib/font-pipeline/calibration";
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB upload cap
@@ -273,8 +273,9 @@ export async function saveFontFromPreview(
   if (bytes.length === 0) return { ok: false, message: "empty font" };
   if (bytes.length > 5 * 1024 * 1024) return { ok: false, message: "font too large" };
 
-  const finalName = await dedupeFontFilename(requestedName);
-  await saveFont(finalName, bytes);
+  // saveFont appends its own collision-safe random suffix.
+  const saved = await saveFont(requestedName, bytes);
+  const finalName = saved.filename;
 
   revalidatePath("/");
   revalidatePath("/cascade");

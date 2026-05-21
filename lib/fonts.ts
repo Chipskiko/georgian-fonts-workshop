@@ -12,7 +12,10 @@ const EXT_TO_FORMAT: Record<string, FontEntry["format"]> = {
 };
 
 function toName(filename: string): { name: string; designer?: string } {
-  const base = filename.replace(/\.(ttf|otf|woff2?|TTF|OTF|WOFF2?)$/, "");
+  let base = filename.replace(/\.(ttf|otf|woff2?|TTF|OTF|WOFF2?)$/, "");
+  // saveFont appends `__<6 alnum>` to every stored file as a collision-
+  // avoidance suffix; strip it so the display name stays clean.
+  base = base.replace(/__[a-z0-9]{6}$/i, "");
   const parts = base.split("__");
   if (parts.length >= 2) {
     return { name: parts[0].replace(/[-_]+/g, " "), designer: parts[1].replace(/[-_]+/g, " ") };

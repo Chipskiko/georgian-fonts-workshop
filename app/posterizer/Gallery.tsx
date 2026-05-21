@@ -76,9 +76,16 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
                 aria-label="open poster"
               >
                 {/* Plain <img>: PNGs are already optimized & external Blob
-                    URLs would require next/image domain config. */}
+                    URLs would require next/image domain config. onError
+                    drops the tile if the underlying blob was deleted in
+                    the gap between two polling cycles. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt="poster" loading="lazy" />
+                <img
+                  src={p.url}
+                  alt="poster"
+                  loading="lazy"
+                  onError={() => setPosters((cur) => cur.filter((x) => x.id !== p.id))}
+                />
               </button>
               <div className="gallery-tile-meta">
                 <a href={p.url} download className="gallery-download">

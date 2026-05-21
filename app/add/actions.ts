@@ -5,7 +5,6 @@ import { revalidatePath } from "next/cache";
 import {
   saveFont,
   deleteFont as storageDeleteFont,
-  dedupeFontFilename,
 } from "@/lib/font-storage";
 import { passwordsMatch } from "@/lib/auth";
 
@@ -40,10 +39,12 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
 
   const cleanDesigner = safeSegment(designer);
   const requested = cleanDesigner ? `${baseName}__${cleanDesigner}${originalExt}` : `${baseName}${originalExt}`;
-  const finalName = await dedupeFontFilename(requested);
 
+  // saveFont appends its own collision-safe random suffix, so dedupe
+  // (a non-atomic check-then-write) is no longer needed.
   const buffer = Buffer.from(await file.arrayBuffer());
-  await saveFont(finalName, buffer);
+  const saved = await saveFont(requested, buffer);
+  const finalName = saved.filename;
 
   revalidatePath("/");
   revalidatePath("/cascade");

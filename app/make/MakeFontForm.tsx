@@ -290,10 +290,15 @@ export function MakeFontForm() {
 
   return (
     <>
-      <p className="add-blurb make-blurb">
-        1. <a href="/api/template" download className="make-link">გადმოწერე ტემპლეიტი</a>{" "}
-        (a4 pdf). 2. დაბეჭდე. 3. შეავსე. 4. ატვირთე.
-      </p>
+      <ol className="add-blurb make-blurb make-steps">
+        <li>
+          <a href="/api/template" download className="make-link">გადმოწერე ტემპლეიტი</a>{" "}
+          (a4 pdf)
+        </li>
+        <li>დაბეჭდე</li>
+        <li>შეავსე</li>
+        <li>ატვირთე</li>
+      </ol>
 
       {!preview ? (
         <form className="add-form" ref={formRef} onSubmit={handleSubmit}>

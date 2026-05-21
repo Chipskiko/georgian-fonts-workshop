@@ -29,6 +29,17 @@ function useBlob(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
+/** Append a short random segment so concurrent uploads with the same
+ * requested name don't overwrite each other. The `__` separator lets
+ * toName() in lib/fonts.ts strip it cleanly when computing the display
+ * name. Probability of two writes colliding: 36^6 ≈ 1 in 2 billion. */
+function withRandomSuffix(filename: string): string {
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  const rand = Math.random().toString(36).slice(2, 8).padStart(6, "0");
+  return `${base}__${rand}${ext}`;
+}
+
 // --- Local FS adapter ----------------------------------------------------
 
 function listFs(): StoredFont[] {
@@ -57,14 +68,15 @@ async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<Sto
       "Blob storage not configured — set BLOB_READ_WRITE_TOKEN (Vercel project → Storage tab → connect Blob).",
     );
   }
-  const dest = path.join(FONT_DIR_FS, filename);
+  const unique = withRandomSuffix(filename);
+  const dest = path.join(FONT_DIR_FS, unique);
   if (path.relative(FONT_DIR_FS, dest).startsWith("..")) {
     throw new Error("invalid font filename");
   }
   await writeFile(dest, Buffer.from(bytes));
   return {
-    filename,
-    publicUrl: `/fonts/${encodeURIComponent(filename)}`,
+    filename: unique,
+    publicUrl: `/fonts/${encodeURIComponent(unique)}`,
     fetchBytes: async () => new Uint8Array(readFileSync(dest)),
   };
 }
@@ -113,13 +125,14 @@ async function listBlob(): Promise<StoredFont[]> {
 
 async function saveBlob(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
   const { put } = await import("@vercel/blob");
-  const blob = await put(`${BLOB_PREFIX}${filename}`, Buffer.from(bytes), {
+  const unique = withRandomSuffix(filename);
+  const blob = await put(`${BLOB_PREFIX}${unique}`, Buffer.from(bytes), {
     access: "public",
     addRandomSuffix: false,
     contentType: "font/ttf",
   });
   return {
-    filename,
+    filename: unique,
     publicUrl: blob.url,
     fetchBytes: async () => {
       const r = await fetch(blob.url);
