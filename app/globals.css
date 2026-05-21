@@ -20,6 +20,10 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
+  /* Belt-and-suspenders for the viewport meta: stops iOS Safari's
+     double-tap-to-zoom + pinch-zoom on every tap target. (The cascade
+     stage overrides this to `none` for its drag-to-pin handler.) */
+  touch-action: manipulation;
 }
 
 body {
@@ -963,6 +967,9 @@ p {
 }
 .cascade-a4-stage[data-tool="eraser"] {
   cursor: url("/cursors/eraser.svg") 16 16, crosshair;
+}
+.cascade-a4-stage[data-tool="type"] {
+  cursor: text;
 }
 
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions

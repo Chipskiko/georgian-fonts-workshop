@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { fontFaceCss, getFonts } from "@/lib/fonts";
 import Link from "next/link";
@@ -6,6 +6,19 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "georgian fonts workshop",
   description: "custom georgian typography from the workshop.",
+};
+
+// Lock the viewport on phones: no pinch-zoom, no double-tap zoom,
+// no zoom-on-input-focus drift. The cascade UI is hand-tuned for the
+// device width and zooming would misalign the A4 stage's tap targets
+// and the iOS Safari keyboard's auto-zoom-on-focus would shift the
+// whole layout.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false,
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

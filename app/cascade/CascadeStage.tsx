@@ -43,7 +43,7 @@ const DRAW_SCALE = SAVE_PX_W / A4_WIDTH;
 const PENCIL_WIDTH_CSS = 3; // CSS px on screen
 const ERASER_RADIUS_CSS = 14; // CSS px on screen
 
-type Tool = "move" | "pencil" | "eraser";
+type Tool = "move" | "pencil" | "eraser" | "type";
 
 const DEFAULT_BG = "#ffffff";
 const DEFAULT_FG = "#000000";
@@ -245,6 +245,16 @@ export function CascadeStage({
   useEffect(() => {
     fgRef.current = fg;
   }, [fg]);
+  // Switching to the "type" tool opens the soft keyboard (focus the
+  // hidden input); switching away blurs to dismiss the keyboard so it
+  // stops eating screen space during drag/draw/erase.
+  useEffect(() => {
+    if (tool === "type") {
+      keyInputRef.current?.focus();
+    } else {
+      keyInputRef.current?.blur();
+    }
+  }, [tool]);
 
   async function ensureFontFaceLoaded(font: FontEntry) {
     if (runtime.loadedFontFaceIds.has(font.id)) return;
@@ -339,9 +349,14 @@ export function CascadeStage({
     // A4 stage. Clicks on color pickers, font selector, save button must
     // not steal focus from those controls.
     const target = e.target as HTMLElement;
-    if (target.closest(".cascade-a4-stage")) {
-      keyInputRef.current?.focus();
-    }
+    if (!target.closest(".cascade-a4-stage")) return;
+    // On mobile, only refocus when the user is in the "type" tool —
+    // otherwise tapping the stage to drag/draw/erase would pop the soft
+    // keyboard. Desktop always refocuses (no soft keyboard to worry
+    // about, and typing should work the instant any control is clicked).
+    const isMobile = window.matchMedia("(max-width: 700px)").matches;
+    if (isMobile && tool !== "type") return;
+    keyInputRef.current?.focus();
   }
 
   // --- Drag-to-pin handlers ------------------------------------------
@@ -783,6 +798,28 @@ export function CascadeStage({
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.3"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={
+                tool === "type"
+                  ? "cascade-tool-btn active"
+                  : "cascade-tool-btn"
+              }
+              onClick={() => setTool("type")}
+              aria-label="type tool"
+              title="type letters"
+            >
+              {/* Capital T — opens the soft keyboard for typing */}
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M3 4 H13 M8 4 V13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
                 />
               </svg>
             </button>
