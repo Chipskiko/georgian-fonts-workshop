@@ -626,6 +626,7 @@ p {
   transform-origin: center;
 }
 
+
 /* Off-screen keyboard input. Stays focused so typing always reaches
    handleKeyDown, but is invisible and doesn't take layout space. */
 .poster-key-input {
@@ -769,20 +770,72 @@ p {
   position: relative;
   overflow: hidden;
   border: 2px solid var(--fg);
-  /* Grab hand by default (you can pick up letters); switches to grabbing
-     while the pointer is held down. Typing still happens via the global
-     key listener — cursor only hints at the click-interaction. */
-  cursor: grab;
   flex-shrink: 0;
-  /* Drag-to-pin: stop mobile from interpreting touches as scroll/zoom,
-     and stop accidental text selection during the grab. */
+  /* Stop mobile from interpreting touches as scroll/zoom, and stop
+     accidental text selection during drag/draw/erase strokes. */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.cascade-a4-stage:active {
+/* Cursor varies by active tool — set via data-tool attribute. */
+.cascade-a4-stage[data-tool="move"] {
+  cursor: grab;
+}
+.cascade-a4-stage[data-tool="move"]:active {
   cursor: grabbing;
+}
+.cascade-a4-stage[data-tool="pencil"],
+.cascade-a4-stage[data-tool="eraser"] {
+  cursor: crosshair;
+}
+
+/* Drawing canvas sits inside the stage, behind letters. CSS dimensions
+   match the stage; the buffer is at print resolution so strokes stay
+   crisp when html2canvas-pro scales the snapshot up ~6x. */
+.cascade-draw-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* Tool palette (move / pencil / eraser). Mirrors .tuner-tab styling so
+   it sits within the same visual vocabulary as the rest of the site. */
+.cascade-tool-group {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px dashed var(--fg);
+  gap: 0;
+}
+
+.cascade-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--fg);
+  cursor: pointer;
+  padding: 0;
+  line-height: 0;
+}
+
+.cascade-tool-btn + .cascade-tool-btn {
+  border-left: 0;
+}
+
+.cascade-tool-btn:hover:not(.active) {
+  background: var(--bg-tint);
+}
+
+.cascade-tool-btn.active {
+  background: var(--fg);
+  color: var(--bg);
 }
 
 .cascade-save-btn {

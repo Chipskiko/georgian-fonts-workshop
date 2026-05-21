@@ -31,8 +31,16 @@ const SAVE_PX_H = Math.round((A4_MM_H / 25.4) * DPI); // 3508
 const LETTER_SIZE = 56;
 const SPAWN_TOP_Y = 12;
 const CEILING_Y = -4;
-const FULL_TOP_THRESHOLD = SPAWN_TOP_Y + 4;
 const POLL_INTERVAL_MS = 3000;
+
+// Drawing-tool constants. The draw canvas runs at print resolution so
+// strokes stay crisp in the saved PNG (the snapshot scales the canvas
+// up ~6x, and a low-res buffer would look blurry).
+const DRAW_SCALE = SAVE_PX_W / A4_WIDTH;
+const PENCIL_WIDTH_CSS = 3; // CSS px on screen
+const ERASER_RADIUS_CSS = 14; // CSS px on screen
+
+type Tool = "move" | "pencil" | "eraser";
 
 const DEFAULT_BG = "#ffffff";
 const DEFAULT_FG = "#000000";
@@ -162,11 +170,12 @@ function scaleUpLetter(letter: Letter) {
   letter.scaleLevel = nextLevel;
 }
 
-function removeLast() {
+function removeLetter(id: number) {
   if (!runtime.engine) return;
-  const last = runtime.letters.pop();
-  if (!last) return;
-  Matter.Composite.remove(runtime.engine.world, last.body);
+  const idx = runtime.letters.findIndex((l) => l.id === id);
+  if (idx === -1) return;
+  const [letter] = runtime.letters.splice(idx, 1);
+  Matter.Composite.remove(runtime.engine.world, letter.body);
 }
 
 function clearAll() {
@@ -193,6 +202,9 @@ export function CascadeStage({
     initialFonts[0]?.id ?? null,
   );
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  // Current pointer tool: move (drag/resize letters), pencil (draw lines),
+  // eraser (delete letters + erase canvas pixels).
+  const [tool, setTool] = useState<Tool>("move");
 
   const allFontsRef = useRef<FontEntry[]>(initialFonts);
   const dynamicStyleRef = useRef<HTMLStyleElement | null>(null);
@@ -209,6 +221,13 @@ export function CascadeStage({
     offsetX: number;
     offsetY: number;
   }>({ letterId: null, offsetX: 0, offsetY: 0 });
+  // Pencil/eraser stroke tracking. `active` is set on pointerdown for
+  // those tools and cleared on pointerup; lastX/lastY remember the
+  // previous point so we can draw/erase a continuous line.
+  const strokeRef = useRef<{ active: boolean; lastX: number; lastY: number }>(
+    { active: false, lastX: 0, lastY: 0 },
+  );
+  const drawCanvasRef = useRef<HTMLCanvasElement | null>(null);
   // Refs for values read inside saveAndReset / handlers — keeping them in
   // refs means the inner functions don't capture stale state.
   const currentFontIdRef = useRef(currentFontId);
@@ -268,6 +287,7 @@ export function CascadeStage({
       if (!result.ok) throw new Error(result.message);
       // Wipe stage so the user can start the next poster immediately
       clearAll();
+      clearDrawCanvas();
       setSaveStatus("saved");
       setTick((n) => (n + 1) % 1_000_000);
       window.setTimeout(() => setSaveStatus("idle"), 5000);
@@ -286,21 +306,12 @@ export function CascadeStage({
       e.preventDefault();
       return;
     }
-    if (e.key === "Backspace") {
-      e.preventDefault();
-      removeLast();
-      setTick((n) => (n + 1) % 1_000_000);
-      return;
-    }
     e.preventDefault();
     let ch = e.key;
     if (ch.length === 1 && !ALPHABET_SET.has(ch)) {
       ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
     }
     if (!ALPHABET_SET.has(ch)) return;
-    // No auto-save when full — user decides when to save via the შენახვა
-    // button. Letters can keep being typed; they'll just squeeze at the
-    // top of the pile.
     const fontId = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
     if (!fontId) return;
     spawnLetter(ch, fontId);
@@ -335,79 +346,225 @@ export function CascadeStage({
     };
   }
 
+  /** Find the topmost (newest) letter whose body circle contains the
+   * given physics point, or null if there's none. */
+  function letterAt(px: number, py: number): Letter | null {
+    for (let i = runtime.letters.length - 1; i >= 0; i--) {
+      const l = runtime.letters[i];
+      const dx = l.body.position.x - px;
+      const dy = l.body.position.y - py;
+      if (Math.hypot(dx, dy) <= l.size * 0.42) return l;
+    }
+    return null;
+  }
+
+  function clearDrawCanvas() {
+    const c = drawCanvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+
+  /** Draw a stroke segment from (fx,fy) to (tx,ty) in CSS coords. Coords
+   * are multiplied by DRAW_SCALE because the canvas buffer is at print
+   * resolution. */
+  function pencilStroke(fx: number, fy: number, tx: number, ty: number) {
+    const ctx = drawCanvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.strokeStyle = fgRef.current;
+    ctx.lineWidth = PENCIL_WIDTH_CSS * DRAW_SCALE;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalCompositeOperation = "source-over";
+    ctx.beginPath();
+    ctx.moveTo(fx * DRAW_SCALE, fy * DRAW_SCALE);
+    ctx.lineTo(tx * DRAW_SCALE, ty * DRAW_SCALE);
+    ctx.stroke();
+  }
+
+  function pencilDot(x: number, y: number) {
+    const ctx = drawCanvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = fgRef.current;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.beginPath();
+    ctx.arc(
+      x * DRAW_SCALE,
+      y * DRAW_SCALE,
+      (PENCIL_WIDTH_CSS / 2) * DRAW_SCALE,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+  }
+
+  /** Erase a stroke of pixels from (fx,fy) to (tx,ty). Uses
+   * destination-out compositing so it punches transparent holes
+   * regardless of stroke color. */
+  function eraseStroke(fx: number, fy: number, tx: number, ty: number) {
+    const ctx = drawCanvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.lineWidth = ERASER_RADIUS_CSS * 2 * DRAW_SCALE;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(fx * DRAW_SCALE, fy * DRAW_SCALE);
+    ctx.lineTo(tx * DRAW_SCALE, ty * DRAW_SCALE);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function eraseDot(x: number, y: number) {
+    const ctx = drawCanvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(
+      x * DRAW_SCALE,
+      y * DRAW_SCALE,
+      ERASER_RADIUS_CSS * DRAW_SCALE,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Eraser also kills any letters under the pointer (or within its
+   * radius). Used by both pointerdown and pointermove in eraser mode. */
+  function eraseLettersNear(px: number, py: number): boolean {
+    let removed = false;
+    for (let i = runtime.letters.length - 1; i >= 0; i--) {
+      const l = runtime.letters[i];
+      const dx = l.body.position.x - px;
+      const dy = l.body.position.y - py;
+      if (Math.hypot(dx, dy) <= ERASER_RADIUS_CSS + l.size * 0.42) {
+        removeLetter(l.id);
+        removed = true;
+      }
+    }
+    return removed;
+  }
+
+  /** setPointerCapture can throw "No active pointer" in obscure cases
+   * (browser quirks, programmatic events). Capture is a nice-to-have for
+   * tracking drags off-element — failing it shouldn't abort the handler. */
+  function safeCapture(e: React.PointerEvent<HTMLDivElement>) {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* no-op */
+    }
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     const p = pointerToPhysics(e.clientX, e.clientY);
     if (!p) return;
-    // Hit-test against letter circle bodies, newest-first so the top of
-    // the visual stack is grabbed when letters overlap.
-    let hit: Letter | undefined;
-    for (let i = runtime.letters.length - 1; i >= 0; i--) {
-      const l = runtime.letters[i];
-      const dx = l.body.position.x - p.x;
-      const dy = l.body.position.y - p.y;
-      if (Math.hypot(dx, dy) <= l.size * 0.42) {
-        hit = l;
-        break;
-      }
+
+    if (tool === "move") {
+      const hit = letterAt(p.x, p.y);
+      if (!hit) return;
+      e.preventDefault();
+      safeCapture(e);
+      // Freeze the letter in place while dragging. Static bodies still
+      // collide with dynamic letters.
+      Matter.Body.setStatic(hit.body, true);
+      dragRef.current = {
+        letterId: hit.id,
+        offsetX: hit.body.position.x - p.x,
+        offsetY: hit.body.position.y - p.y,
+      };
+      return;
     }
-    if (!hit) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    // Freeze the letter in place while dragging. Static bodies still
-    // collide with dynamic letters — exactly what the user asked for.
-    Matter.Body.setStatic(hit.body, true);
-    dragRef.current = {
-      letterId: hit.id,
-      offsetX: hit.body.position.x - p.x,
-      offsetY: hit.body.position.y - p.y,
-    };
+
+    if (tool === "pencil") {
+      e.preventDefault();
+      safeCapture(e);
+      strokeRef.current = { active: true, lastX: p.x, lastY: p.y };
+      // Stamp a dot for single-click marks (no move event will fire)
+      pencilDot(p.x, p.y);
+      return;
+    }
+
+    if (tool === "eraser") {
+      e.preventDefault();
+      safeCapture(e);
+      strokeRef.current = { active: true, lastX: p.x, lastY: p.y };
+      const removed = eraseLettersNear(p.x, p.y);
+      eraseDot(p.x, p.y);
+      if (removed) setTick((n) => (n + 1) % 1_000_000);
+    }
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (dragRef.current.letterId === null) return;
-    const p = pointerToPhysics(e.clientX, e.clientY);
-    if (!p) return;
-    const letter = runtime.letters.find((l) => l.id === dragRef.current.letterId);
-    if (!letter) return;
-    const radius = letter.size * 0.42;
-    // Clamp to stage bounds so the user can't drag a letter off-canvas
-    const x = Math.max(
-      radius,
-      Math.min(A4_WIDTH - radius, p.x + dragRef.current.offsetX),
-    );
-    const y = Math.max(
-      radius,
-      Math.min(A4_HEIGHT - radius, p.y + dragRef.current.offsetY),
-    );
-    Matter.Body.setPosition(letter.body, { x, y });
+    if (tool === "move") {
+      if (dragRef.current.letterId === null) return;
+      const p = pointerToPhysics(e.clientX, e.clientY);
+      if (!p) return;
+      const letter = runtime.letters.find(
+        (l) => l.id === dragRef.current.letterId,
+      );
+      if (!letter) return;
+      const radius = letter.size * 0.42;
+      const x = Math.max(
+        radius,
+        Math.min(A4_WIDTH - radius, p.x + dragRef.current.offsetX),
+      );
+      const y = Math.max(
+        radius,
+        Math.min(A4_HEIGHT - radius, p.y + dragRef.current.offsetY),
+      );
+      Matter.Body.setPosition(letter.body, { x, y });
+      return;
+    }
+
+    if (tool === "pencil") {
+      if (!strokeRef.current.active) return;
+      const p = pointerToPhysics(e.clientX, e.clientY);
+      if (!p) return;
+      pencilStroke(strokeRef.current.lastX, strokeRef.current.lastY, p.x, p.y);
+      strokeRef.current.lastX = p.x;
+      strokeRef.current.lastY = p.y;
+      return;
+    }
+
+    if (tool === "eraser") {
+      if (!strokeRef.current.active) return;
+      const p = pointerToPhysics(e.clientX, e.clientY);
+      if (!p) return;
+      eraseStroke(strokeRef.current.lastX, strokeRef.current.lastY, p.x, p.y);
+      const removed = eraseLettersNear(p.x, p.y);
+      strokeRef.current.lastX = p.x;
+      strokeRef.current.lastY = p.y;
+      if (removed) setTick((n) => (n + 1) % 1_000_000);
+    }
   }
 
   function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (dragRef.current.letterId === null) return;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
-    // Body stays static — that's the lock. Re-grabbing works because
-    // handlePointerDown's hit-test catches static bodies too.
-    dragRef.current = { letterId: null, offsetX: 0, offsetY: 0 };
+    if (tool === "move") {
+      if (dragRef.current.letterId === null) return;
+      // Body stays static — that's the lock. Re-grabbing works because
+      // handlePointerDown's hit-test catches static bodies too.
+      dragRef.current = { letterId: null, offsetX: 0, offsetY: 0 };
+      return;
+    }
+    strokeRef.current.active = false;
   }
 
   /** Double-click cycles the letter under the pointer through SCALES.
-   * The first click of the pair pins the letter (via pointerdown), so
-   * resized letters end up static — the user is composing intentionally. */
+   * Only meaningful in move mode. */
   function handleDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (tool !== "move") return;
     const p = pointerToPhysics(e.clientX, e.clientY);
     if (!p) return;
-    let hit: Letter | undefined;
-    for (let i = runtime.letters.length - 1; i >= 0; i--) {
-      const l = runtime.letters[i];
-      const dx = l.body.position.x - p.x;
-      const dy = l.body.position.y - p.y;
-      if (Math.hypot(dx, dy) <= l.size * 0.42) {
-        hit = l;
-        break;
-      }
-    }
+    const hit = letterAt(p.x, p.y);
     if (!hit) return;
     e.preventDefault();
     scaleUpLetter(hit);
@@ -527,6 +684,87 @@ export function CascadeStage({
           >
             შენახვა
           </button>
+          <div className="cascade-tool-group" role="toolbar" aria-label="tools">
+            <button
+              type="button"
+              className={
+                tool === "move"
+                  ? "cascade-tool-btn active"
+                  : "cascade-tool-btn"
+              }
+              onClick={() => setTool("move")}
+              aria-label="move tool"
+              title="move / drag letters"
+            >
+              {/* Classic mouse arrow */}
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M3 2 L3 13 L6 10 L8 14.5 L9.7 13.8 L7.7 9.3 L11.5 9.3 Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={
+                tool === "pencil"
+                  ? "cascade-tool-btn active"
+                  : "cascade-tool-btn"
+              }
+              onClick={() => setTool("pencil")}
+              aria-label="pencil tool"
+              title="draw"
+            >
+              {/* Diagonal pencil */}
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M2.5 13.5 L4.5 11.5 L11 5 L13 7 L6.5 13.5 Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M11 5 L12 4 L14 6 L13 7"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={
+                tool === "eraser"
+                  ? "cascade-tool-btn active"
+                  : "cascade-tool-btn"
+              }
+              onClick={() => setTool("eraser")}
+              aria-label="eraser tool"
+              title="erase letters + drawings"
+            >
+              {/* Angled rectangle with mid-line, eraser-style */}
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M9 2 L14 7 L7 14 L2 9 Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M5.5 12.5 L10.5 7.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
@@ -534,6 +772,7 @@ export function CascadeStage({
         <div
           ref={stageRef}
           className="cascade-a4-stage"
+          data-tool={tool}
           style={{
             width: A4_WIDTH,
             height: A4_HEIGHT,
@@ -546,6 +785,15 @@ export function CascadeStage({
           onPointerCancel={handlePointerUp}
           onDoubleClick={handleDoubleClick}
         >
+          {/* Drawing canvas — sits behind letters so glyphs stay on top.
+              Buffer is at print resolution; CSS display matches stage. */}
+          <canvas
+            ref={drawCanvasRef}
+            className="cascade-draw-canvas"
+            width={SAVE_PX_W}
+            height={SAVE_PX_H}
+            style={{ width: A4_WIDTH, height: A4_HEIGHT }}
+          />
           {runtime.letters.map((l) => (
             <span
               key={l.id}
