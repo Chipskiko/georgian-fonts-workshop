@@ -54,14 +54,23 @@ p {
 }
 
 .titleButtons {
-  float: right;
-  margin-left: 1.5ch;
+  /* Spacing is handled by the parent .nav-desktop's gap; no per-item
+     float/margin needed now that the nav is a flex container. */
+}
+
+/* Brand is hidden on every viewport — the hamburger (mobile) and the
+   centered nav (desktop) make it redundant. */
+.infoButtons {
+  display: none;
 }
 
 /* --- Nav: desktop vs mobile hamburger --- */
-/* Desktop default: inline links float right, hamburger hidden. */
+/* Desktop default: centered flex row of links, hamburger hidden. */
 .nav-desktop {
-  display: contents;
+  display: flex;
+  justify-content: center;
+  gap: 1.5ch;
+  width: 100%;
 }
 
 .nav-mobile {
@@ -69,22 +78,28 @@ p {
 }
 
 @media (max-width: 700px) {
-  /* Hide the brand on mobile — the hamburger is enough chrome. */
-  .infoButtons {
-    display: none;
+  /* Match cascade-page horizontal padding (16px) so the mobile nav's
+     right edge aligns with the right edge of the cascade poster view. */
+  #info {
+    width: 100%;
+    padding-left: 16px;
+    padding-right: 16px;
   }
 
   .nav-desktop {
     display: none;
   }
 
-  /* Nav-mobile spans the row with hamburger left + (when open) menu
-     items column-stacked on the right. summary and panel are siblings
-     in a flex row, so the first panel item sits on the SAME line as
-     the hamburger. */
+  /* Nav-mobile spans the row with hamburger pinned left + (when open)
+     menu items column-stacked pinned right. summary and panel are
+     siblings in a flex row; justify-content: space-between pushes them
+     to opposite edges so the panel's right edge sits at the stage's
+     right edge (both controlled by 16px padding on this container vs
+     cascade-page). */
   .nav-mobile {
     display: flex;
     align-items: flex-start;
+    justify-content: space-between;
     width: 100%;
   }
 
@@ -102,12 +117,12 @@ p {
     display: none;
   }
 
-  /* Menu panel: no box, transparent, right-aligned column. flex:1
-     pushes it to fill remaining row, align-items: flex-end stacks the
-     links to the right edge. */
+  /* Menu panel: no box, transparent, content-width column on the
+     right. align-items: flex-end keeps each item's right edge flush
+     with the panel's right (which is the nav-mobile's right, which
+     is the cascade poster's right). */
   .nav-mobile-panel {
     display: none;
-    flex: 1;
     flex-direction: column;
     align-items: flex-end;
     gap: 6px;
