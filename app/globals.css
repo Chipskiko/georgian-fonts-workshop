@@ -42,6 +42,7 @@ p {
 }
 
 #info {
+  position: relative;
   width: 99vw;
   min-width: 350px;
   margin: 20px 0;
@@ -55,6 +56,70 @@ p {
 .titleButtons {
   float: right;
   margin-left: 1.5ch;
+}
+
+/* --- Nav: desktop vs mobile hamburger --- */
+/* Desktop default: inline links float right, hamburger hidden. */
+.nav-desktop {
+  display: contents;
+}
+
+.nav-mobile {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .nav-desktop {
+    display: none;
+  }
+
+  .nav-mobile {
+    display: block;
+    float: right;
+    margin-left: 1.5ch;
+  }
+
+  /* Strip the default disclosure triangle. */
+  .nav-toggle {
+    list-style: none;
+    cursor: pointer;
+    color: var(--fg);
+    display: inline-flex;
+    align-items: center;
+    padding: 0 4px;
+  }
+  .nav-toggle::-webkit-details-marker {
+    display: none;
+  }
+
+  /* Dropdown panel — anchored to the right edge of #info. Hidden by
+     default; the details[open] selector reveals it. Setting display
+     explicitly here would override the browser's native hide-when-closed
+     behavior. */
+  .nav-mobile-panel {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 4px;
+    z-index: 20;
+    background: var(--bg);
+    border: 1px solid var(--fg);
+    padding: 10px 14px;
+    flex-direction: column;
+    gap: 8px;
+    text-align: right;
+    font-family: var(--ui-georgian);
+    text-transform: lowercase;
+  }
+
+  .nav-mobile[open] .nav-mobile-panel {
+    display: flex;
+  }
+
+  .nav-mobile-panel a {
+    color: var(--fg);
+    text-decoration: none;
+  }
 }
 
 #contents {
