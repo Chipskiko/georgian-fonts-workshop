@@ -49,6 +49,14 @@ function listFs(): StoredFont[] {
 }
 
 async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
+  // On Vercel the filesystem is read-only — writing to public/fonts/ throws
+  // EROFS which surfaces as a generic 500. Surface the real cause early so
+  // it's obvious that BLOB_READ_WRITE_TOKEN wasn't injected.
+  if (process.env.VERCEL) {
+    throw new Error(
+      "Blob storage not configured — set BLOB_READ_WRITE_TOKEN (Vercel project → Storage tab → connect Blob).",
+    );
+  }
   const dest = path.join(FONT_DIR_FS, filename);
   if (path.relative(FONT_DIR_FS, dest).startsWith("..")) {
     throw new Error("invalid font filename");

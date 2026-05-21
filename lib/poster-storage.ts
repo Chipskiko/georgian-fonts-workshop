@@ -55,6 +55,12 @@ function listFs(): StoredPoster[] {
 }
 
 async function saveFs(filename: string, bytes: Buffer): Promise<StoredPoster> {
+  // See lib/font-storage.ts for rationale — Vercel filesystem is read-only.
+  if (process.env.VERCEL) {
+    throw new Error(
+      "Blob storage not configured — set BLOB_READ_WRITE_TOKEN (Vercel project → Storage tab → connect Blob).",
+    );
+  }
   ensureFsDir();
   const safe = path.basename(filename);
   if (!safe || safe !== filename) throw new Error("invalid poster filename");
