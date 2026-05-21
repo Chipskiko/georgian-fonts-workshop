@@ -25,17 +25,17 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
   const fontName = (formData.get("fontName") as string | null)?.trim() ?? "";
   const designer = (formData.get("designer") as string | null)?.trim() ?? "";
 
-  if (!(file instanceof File)) return { ok: false, message: "no file selected" };
-  if (file.size === 0) return { ok: false, message: "empty file" };
-  if (file.size > MAX_BYTES) return { ok: false, message: `file too large (max ${MAX_BYTES / 1024 / 1024}MB)` };
+  if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის არჩეული" };
+  if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
+  if (file.size > MAX_BYTES) return { ok: false, message: `ფაილი ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
 
   const originalExt = path.extname(file.name).toLowerCase();
   if (!ALLOWED_EXT.includes(originalExt)) {
-    return { ok: false, message: `unsupported format. use ${ALLOWED_EXT.join(", ")}` };
+    return { ok: false, message: `მხარდაუჭერელი ფორმატი. გამოიყენე ${ALLOWED_EXT.join(", ")}` };
   }
 
   const baseName = safeSegment(fontName || path.basename(file.name, originalExt));
-  if (!baseName) return { ok: false, message: "name required" };
+  if (!baseName) return { ok: false, message: "სახელი სავალდებულოა" };
 
   const cleanDesigner = safeSegment(designer);
   const requested = cleanDesigner ? `${baseName}__${cleanDesigner}${originalExt}` : `${baseName}${originalExt}`;
@@ -51,7 +51,7 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
   revalidatePath("/add");
   revalidatePath("/posterizer");
 
-  return { ok: true, message: `uploaded ${finalName}` };
+  return { ok: true, message: `ატვირთულია ${finalName}` };
 }
 
 export async function checkPassword(password: string): Promise<boolean> {
@@ -60,27 +60,27 @@ export async function checkPassword(password: string): Promise<boolean> {
 
 export async function deleteFont(filename: string, password: string): Promise<{ ok: boolean; message: string }> {
   if (!passwordsMatch(password)) {
-    return { ok: false, message: "wrong password" };
+    return { ok: false, message: "მცდარი პაროლი" };
   }
 
   const safe = path.basename(filename);
   if (!safe || safe !== filename) {
-    return { ok: false, message: "invalid filename" };
+    return { ok: false, message: "არასწორი ფაილის სახელი" };
   }
   const ext = path.extname(safe).toLowerCase();
   if (!ALLOWED_EXT.includes(ext)) {
-    return { ok: false, message: "not a font file" };
+    return { ok: false, message: "არ არის შრიფტის ფაილი" };
   }
 
   try {
     await storageDeleteFont(safe);
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : "delete failed" };
+    return { ok: false, message: err instanceof Error ? err.message : "წაშლა ვერ მოხერხდა" };
   }
 
   revalidatePath("/");
   revalidatePath("/cascade");
   revalidatePath("/add");
   revalidatePath("/posterizer");
-  return { ok: true, message: `deleted ${safe}` };
+  return { ok: true, message: `წაშლილია ${safe}` };
 }

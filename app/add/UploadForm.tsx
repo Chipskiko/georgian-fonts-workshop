@@ -22,7 +22,7 @@ export function UploadForm() {
         setFileName(null);
       }
     } catch (err) {
-      setResult({ ok: false, message: err instanceof Error ? err.message : "upload failed" });
+      setResult({ ok: false, message: err instanceof Error ? err.message : "ატვირთვა ვერ მოხერხდა" });
     } finally {
       setPending(false);
     }

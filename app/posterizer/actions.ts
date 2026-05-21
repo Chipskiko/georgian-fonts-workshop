@@ -17,13 +17,13 @@ export async function uploadPoster(
   formData: FormData,
 ): Promise<{ ok: boolean; message: string; id?: string }> {
   const file = formData.get("file");
-  if (!(file instanceof File)) return { ok: false, message: "no file" };
-  if (file.size === 0) return { ok: false, message: "empty file" };
+  if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
+  if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
   if (file.size > MAX_BYTES) {
-    return { ok: false, message: `file too large (max ${MAX_BYTES / 1024 / 1024}MB)` };
+    return { ok: false, message: `ფაილი ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
   }
   if (file.type && file.type !== "image/png") {
-    return { ok: false, message: "must be image/png" };
+    return { ok: false, message: "უნდა იყოს PNG" };
   }
 
   const filename = newPosterFilename();
@@ -31,7 +31,7 @@ export async function uploadPoster(
   const saved = await storageSave(filename, buffer);
 
   revalidatePath("/posterizer");
-  return { ok: true, message: `saved ${saved.id}`, id: saved.id };
+  return { ok: true, message: `შენახულია ${saved.id}`, id: saved.id };
 }
 
 /** List posters, newest first. */
@@ -45,13 +45,13 @@ export async function deletePoster(
   password: string,
 ): Promise<{ ok: boolean; message: string }> {
   if (!passwordsMatch(password)) {
-    return { ok: false, message: "wrong password" };
+    return { ok: false, message: "მცდარი პაროლი" };
   }
   try {
     await storageDelete(filename);
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : "delete failed" };
+    return { ok: false, message: err instanceof Error ? err.message : "წაშლა ვერ მოხერხდა" };
   }
   revalidatePath("/posterizer");
-  return { ok: true, message: `deleted ${filename}` };
+  return { ok: true, message: `წაშლილია ${filename}` };
 }

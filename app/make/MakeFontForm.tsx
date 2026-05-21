@@ -175,7 +175,7 @@ export function MakeFontForm() {
       setPreview(r);
       setStage("previewing");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "failed");
+      setErrorMsg(err instanceof Error ? err.message : "ვერ შესრულდა");
       setStage("idle");
     }
   }
@@ -196,7 +196,7 @@ export function MakeFontForm() {
       setFileName(null);
       setStage("idle");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "save failed");
+      setErrorMsg(err instanceof Error ? err.message : "შენახვა ვერ მოხერხდა");
       setStage("previewing");
     }
   }
@@ -232,7 +232,7 @@ export function MakeFontForm() {
       setTunerFileB64(b64);
       setTunerParams(DEFAULT_TUNER_PARAMS);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "couldn't read file");
+      setErrorMsg(err instanceof Error ? err.message : "ფაილი ვერ წაიკითხა");
     }
   }
 
@@ -273,7 +273,7 @@ export function MakeFontForm() {
         setDebug(r);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "debug failed");
+      setErrorMsg(err instanceof Error ? err.message : "დებაგი ვერ შესრულდა");
     } finally {
       setStage("idle");
     }

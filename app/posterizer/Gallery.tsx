@@ -49,7 +49,7 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
       setPosters((cur) => cur.filter((p) => p.id !== id));
       setPendingDelete(null);
     } catch (err) {
-      setErrMsg(err instanceof Error ? err.message : "delete failed");
+      setErrMsg(err instanceof Error ? err.message : "წაშლა ვერ მოხერხდა");
     } finally {
       setBusyId(null);
     }

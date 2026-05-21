@@ -65,13 +65,13 @@ async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<Sto
   // it's obvious that BLOB_READ_WRITE_TOKEN wasn't injected.
   if (process.env.VERCEL) {
     throw new Error(
-      "Blob storage not configured — set BLOB_READ_WRITE_TOKEN (Vercel project → Storage tab → connect Blob).",
+      "Blob ფაილსაცავი არ არის კონფიგურირებული — დააყენე BLOB_READ_WRITE_TOKEN.",
     );
   }
   const unique = withRandomSuffix(filename);
   const dest = path.join(FONT_DIR_FS, unique);
   if (path.relative(FONT_DIR_FS, dest).startsWith("..")) {
-    throw new Error("invalid font filename");
+    throw new Error("არასწორი შრიფტის ფაილის სახელი");
   }
   await writeFile(dest, Buffer.from(bytes));
   return {
@@ -83,11 +83,11 @@ async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<Sto
 
 async function deleteFs(filename: string): Promise<void> {
   const safe = path.basename(filename);
-  if (!safe || safe !== filename) throw new Error("invalid filename");
+  if (!safe || safe !== filename) throw new Error("არასწორი ფაილის სახელი");
   const ext = path.extname(safe).toLowerCase();
-  if (!ALLOWED_EXT.has(ext)) throw new Error("not a font file");
+  if (!ALLOWED_EXT.has(ext)) throw new Error("არ არის შრიფტის ფაილი");
   const dest = path.join(FONT_DIR_FS, safe);
-  if (path.relative(FONT_DIR_FS, dest).startsWith("..")) throw new Error("invalid path");
+  if (path.relative(FONT_DIR_FS, dest).startsWith("..")) throw new Error("არასწორი მისამართი");
   await unlink(dest);
 }
 

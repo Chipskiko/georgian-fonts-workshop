@@ -44,37 +44,37 @@ export async function previewFontFromScan(formData: FormData): Promise<PreviewRe
   const fontName = (formData.get("fontName") as string | null)?.trim() ?? "";
   const designer = (formData.get("designer") as string | null)?.trim() ?? "";
 
-  if (!(file instanceof File)) return { ok: false, message: "no file" };
-  if (file.size === 0) return { ok: false, message: "empty file" };
-  if (file.size > MAX_BYTES) return { ok: false, message: `too large (max ${MAX_BYTES / 1024 / 1024}MB)` };
+  if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
+  if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
+  if (file.size > MAX_BYTES) return { ok: false, message: `ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
 
   const cleanName = safeSegment(fontName);
-  if (!cleanName) return { ok: false, message: "name required" };
+  if (!cleanName) return { ok: false, message: "სახელი სავალდებულოა" };
   const cleanDesigner = safeSegment(designer);
 
   let buffer: Buffer;
   try {
     buffer = Buffer.from(await file.arrayBuffer());
   } catch {
-    return { ok: false, message: "could not read upload" };
+    return { ok: false, message: "ფაილის წაკითხვა ვერ მოხერხდა" };
   }
 
   let glyphPaths;
   try {
     glyphPaths = await processScan(buffer);
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? `process failed: ${e.message}` : "process failed" };
+    return { ok: false, message: e instanceof Error ? `დამუშავება ვერ შესრულდა: ${e.message}` : "დამუშავება ვერ შესრულდა" };
   }
 
   if (glyphPaths.length === 0) {
-    return { ok: false, message: "no glyphs detected — check the scan and try again" };
+    return { ok: false, message: "ასოები ვერ მოიძებნა — შეამოწმე სკანი და სცადე თავიდან" };
   }
 
   let ttf: Uint8Array;
   try {
     ttf = buildFont(glyphPaths, { familyName: cleanName, designerName: cleanDesigner || undefined });
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? `font build failed: ${e.message}` : "font build failed" };
+    return { ok: false, message: e instanceof Error ? `შრიფტის შექმნა ვერ მოხერხდა: ${e.message}` : "შრიფტის შექმნა ვერ მოხერხდა" };
   }
 
   const requested = cleanDesigner ? `${cleanName}__${cleanDesigner}.ttf` : `${cleanName}.ttf`;
@@ -82,7 +82,7 @@ export async function previewFontFromScan(formData: FormData): Promise<PreviewRe
 
   return {
     ok: true,
-    message: "preview ready",
+    message: "გადახედვა მზადაა",
     glyphCount: glyphPaths.length,
     ttfBase64,
     requestedName: requested,
@@ -113,14 +113,14 @@ export type DebugResult =
  */
 export async function debugScan(formData: FormData): Promise<DebugResult> {
   const file = formData.get("scan");
-  if (!(file instanceof File)) return { ok: false, message: "no file" };
-  if (file.size === 0) return { ok: false, message: "empty file" };
+  if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
+  if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
 
   let buffer: Buffer;
   try {
     buffer = Buffer.from(await file.arrayBuffer());
   } catch {
-    return { ok: false, message: "could not read upload" };
+    return { ok: false, message: "ფაილის წაკითხვა ვერ მოხერხდა" };
   }
 
   try {
@@ -133,7 +133,7 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
       cellCount: overlay.layout.cells.length,
     };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "debug failed";
+    const message = e instanceof Error ? e.message : "დებაგი ვერ შესრულდა";
     // Try the detection-debug fallback. Render an annotated image showing
     // every candidate component the detector found, even though the full
     // pipeline couldn't complete.
@@ -161,7 +161,7 @@ export async function getCalibrationImage(): Promise<{ ok: true; base64: string 
     const png = await generateCalibrationPng();
     return { ok: true, base64: Buffer.from(png).toString("base64") };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "failed to render calibration" };
+    return { ok: false, message: e instanceof Error ? e.message : "კალიბრაცია ვერ შესრულდა" };
   }
 }
 
@@ -183,16 +183,16 @@ export async function tunableDebugScan(
   blur: number,
   traceThreshold: number,
 ): Promise<TunableDebugResult> {
-  if (!fileBase64) return { ok: false, message: "no file" };
+  if (!fileBase64) return { ok: false, message: "ფაილი არ არის" };
   let buffer: Buffer;
   try {
     buffer = Buffer.from(fileBase64, "base64");
   } catch {
-    return { ok: false, message: "could not decode file" };
+    return { ok: false, message: "ფაილის გაშიფვრა ვერ მოხერხდა" };
   }
-  if (buffer.length === 0) return { ok: false, message: "empty file" };
+  if (buffer.length === 0) return { ok: false, message: "ცარიელი ფაილი" };
   if (buffer.length > MAX_BYTES) {
-    return { ok: false, message: `too large (max ${MAX_BYTES / 1024 / 1024}MB)` };
+    return { ok: false, message: `ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
   }
   try {
     const debug = await renderDebugView(buffer, {
@@ -203,7 +203,7 @@ export async function tunableDebugScan(
     });
     return { ok: true, debug };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "debug failed" };
+    return { ok: false, message: e instanceof Error ? e.message : "დებაგი ვერ შესრულდა" };
   }
 }
 
@@ -221,14 +221,14 @@ export async function runCalibration(): Promise<{
   try {
     calibrationPng = await generateCalibrationPng();
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? `calibration generation failed: ${e.message}` : "calibration generation failed" };
+    return { ok: false, message: e instanceof Error ? `კალიბრაციის შექმნა ვერ შესრულდა: ${e.message}` : "კალიბრაციის შექმნა ვერ შესრულდა" };
   }
 
   let overlay;
   try {
     overlay = await renderDebugOverlay(calibrationPng);
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? `debug overlay failed: ${e.message}` : "debug overlay failed" };
+    return { ok: false, message: e instanceof Error ? `დებაგი ვერ შესრულდა: ${e.message}` : "დებაგი ვერ შესრულდა" };
   }
 
   // Reuse the existing preview pipeline by stuffing the calibration PNG into a FormData
@@ -239,7 +239,7 @@ export async function runCalibration(): Promise<{
   fd.set("designer", "synthetic");
   const preview = await previewFontFromScan(fd);
   if (!preview.ok) {
-    return { ok: false, message: `preview failed: ${preview.message}` };
+    return { ok: false, message: `გადახედვა ვერ შესრულდა: ${preview.message}` };
   }
 
   return {
@@ -261,17 +261,17 @@ export async function saveFontFromPreview(
   ttfBase64: string,
   requestedName: string,
 ): Promise<{ ok: boolean; message: string }> {
-  if (!ttfBase64 || !requestedName) return { ok: false, message: "missing data" };
-  if (!requestedName.endsWith(".ttf")) return { ok: false, message: "invalid name" };
+  if (!ttfBase64 || !requestedName) return { ok: false, message: "მონაცემები აკლია" };
+  if (!requestedName.endsWith(".ttf")) return { ok: false, message: "არასწორი სახელი" };
 
   let bytes: Buffer;
   try {
     bytes = Buffer.from(ttfBase64, "base64");
   } catch {
-    return { ok: false, message: "could not decode font" };
+    return { ok: false, message: "შრიფტის გაშიფვრა ვერ მოხერხდა" };
   }
-  if (bytes.length === 0) return { ok: false, message: "empty font" };
-  if (bytes.length > 5 * 1024 * 1024) return { ok: false, message: "font too large" };
+  if (bytes.length === 0) return { ok: false, message: "ცარიელი შრიფტი" };
+  if (bytes.length > 5 * 1024 * 1024) return { ok: false, message: "შრიფტი ძალიან დიდია" };
 
   // saveFont appends its own collision-safe random suffix.
   const saved = await saveFont(requestedName, bytes);
@@ -283,5 +283,5 @@ export async function saveFontFromPreview(
   revalidatePath("/posterizer");
   revalidatePath("/make");
 
-  return { ok: true, message: `saved ${finalName}` };
+  return { ok: true, message: `შენახულია ${finalName}` };
 }

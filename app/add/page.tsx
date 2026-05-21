@@ -13,7 +13,7 @@ export default async function AddPage() {
         <UploadForm />
 
         <div className="admin-section">
-          <h3>admin</h3>
+          <h3>ადმინი</h3>
           <AdminPanel fonts={fonts} />
         </div>
       </div>

@@ -58,16 +58,16 @@ async function saveFs(filename: string, bytes: Buffer): Promise<StoredPoster> {
   // See lib/font-storage.ts for rationale — Vercel filesystem is read-only.
   if (process.env.VERCEL) {
     throw new Error(
-      "Blob storage not configured — set BLOB_READ_WRITE_TOKEN (Vercel project → Storage tab → connect Blob).",
+      "Blob ფაილსაცავი არ არის კონფიგურირებული — დააყენე BLOB_READ_WRITE_TOKEN.",
     );
   }
   ensureFsDir();
   const safe = path.basename(filename);
-  if (!safe || safe !== filename) throw new Error("invalid poster filename");
-  if (!isPng(safe)) throw new Error("poster must be .png");
+  if (!safe || safe !== filename) throw new Error("არასწორი პოსტერის ფაილის სახელი");
+  if (!isPng(safe)) throw new Error("პოსტერი უნდა იყოს PNG");
   const dest = path.join(POSTER_DIR_FS, safe);
   if (path.relative(POSTER_DIR_FS, dest).startsWith("..")) {
-    throw new Error("invalid poster path");
+    throw new Error("არასწორი პოსტერის მისამართი");
   }
   await writeFile(dest, bytes);
   const st = statSync(dest);
@@ -80,10 +80,10 @@ async function saveFs(filename: string, bytes: Buffer): Promise<StoredPoster> {
 
 async function deleteFs(filename: string): Promise<void> {
   const safe = path.basename(filename);
-  if (!safe || safe !== filename) throw new Error("invalid filename");
-  if (!isPng(safe)) throw new Error("not a poster file");
+  if (!safe || safe !== filename) throw new Error("არასწორი ფაილის სახელი");
+  if (!isPng(safe)) throw new Error("არ არის პოსტერის ფაილი");
   const dest = path.join(POSTER_DIR_FS, safe);
-  if (path.relative(POSTER_DIR_FS, dest).startsWith("..")) throw new Error("invalid path");
+  if (path.relative(POSTER_DIR_FS, dest).startsWith("..")) throw new Error("არასწორი მისამართი");
   if (!existsSync(dest)) return;
   await unlink(dest);
 }
@@ -109,7 +109,7 @@ async function listBlob(): Promise<StoredPoster[]> {
 }
 
 async function saveBlob(filename: string, bytes: Buffer): Promise<StoredPoster> {
-  if (!isPng(filename)) throw new Error("poster must be .png");
+  if (!isPng(filename)) throw new Error("პოსტერი უნდა იყოს PNG");
   const { put } = await import("@vercel/blob");
   const blob = await put(`${BLOB_PREFIX}${filename}`, bytes, {
     access: "public",
@@ -124,7 +124,7 @@ async function saveBlob(filename: string, bytes: Buffer): Promise<StoredPoster> 
 }
 
 async function deleteBlob(filename: string): Promise<void> {
-  if (!isPng(filename)) throw new Error("not a poster file");
+  if (!isPng(filename)) throw new Error("არ არის პოსტერის ფაილი");
   const { del, list } = await import("@vercel/blob");
   const { blobs } = await list({ prefix: `${BLOB_PREFIX}${filename}` });
   const target = blobs.find((b) => b.pathname === `${BLOB_PREFIX}${filename}`);

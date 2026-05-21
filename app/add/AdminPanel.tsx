@@ -18,7 +18,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
     setError(null);
     const ok = await unlock(pwInput);
     if (!ok) {
-      setError("wrong password");
+      setError("მცდარი პაროლი");
     } else {
       setPwInput("");
     }
@@ -36,7 +36,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
     setPendingDelete(null);
     setConfirmingDelete(null);
     setMsg(r.message);
-    if (!r.ok && r.message === "wrong password") {
+    if (!r.ok && r.message === "მცდარი პაროლი") {
       handleLock();
     }
   }
@@ -45,7 +45,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
     return (
       <form className="admin-gate" onSubmit={handleSubmit}>
         <label className="add-row">
-          <span>admin password</span>
+          <span>ადმინ პაროლი</span>
           <input
             type="password"
             value={pwInput}
@@ -53,7 +53,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
             autoComplete="off"
           />
         </label>
-        <button type="submit">unlock</button>
+        <button type="submit">გახსენი</button>
         {error ? <p className="add-msg err">{error}</p> : null}
       </form>
     );
@@ -63,10 +63,10 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
     <div className="admin-panel">
       <div className="admin-header">
         <span className="admin-status">
-          <strong>admin unlocked</strong> — click delete to remove a font
+          <strong>ადმინი გახსნილია</strong> — დააწექი წაშლას შრიფტის მოსაშორებლად
         </span>
         <button type="button" className="admin-lock" onClick={handleLock}>
-          lock
+          ჩაკეტე
         </button>
       </div>
 
@@ -81,7 +81,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
               <span className="admin-font-name" style={{ fontFamily: `"${f.id}"` }}>
                 {f.name}
               </span>
-              {f.designer ? <em className="admin-designer"> by {f.designer}</em> : null}
+              {f.designer ? <em className="admin-designer"> ავტორი {f.designer}</em> : null}
               <span className="admin-actions">
                 {confirming ? (
                   <>
@@ -91,7 +91,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
                       onClick={() => handleDelete(f.filename)}
                       disabled={isPending}
                     >
-                      {isPending ? "deleting..." : "yes, delete"}
+                      {isPending ? "იშლება…" : "კი, წაშალე"}
                     </button>
                     <button
                       type="button"
@@ -99,7 +99,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
                       onClick={() => setConfirmingDelete(null)}
                       disabled={isPending}
                     >
-                      cancel
+                      არა
                     </button>
                   </>
                 ) : (
@@ -108,7 +108,7 @@ export function AdminPanel({ fonts }: { fonts: FontEntry[] }) {
                     className="admin-delete"
                     onClick={() => setConfirmingDelete(f.filename)}
                   >
-                    delete
+                    წაშალე
                   </button>
                 )}
               </span>
