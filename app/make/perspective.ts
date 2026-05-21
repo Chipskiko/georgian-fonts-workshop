@@ -210,15 +210,6 @@ function detectMarkers(bitmap: ImageBitmap): MarkerSet | null {
   contours.delete();
   hierarchy.delete();
 
-  // Console diagnostic — open DevTools console to see why detection fell back.
-  console.log("[straightenScan] candidates:", candidates.length, {
-    rejectedTooSmall,
-    rejectedAspect,
-    rejectedDensity,
-    rejectedNesting,
-    qualifying: candidates.length,
-  });
-
   // Size filter: real markers are 30pt; assuming the page fills 40-100% of
   // the photo's shorter side, the marker bbox should be in a known px range.
   // Without this filter, big hand-drawn letters in the cells outrank the
@@ -234,13 +225,7 @@ function detectMarkers(bitmap: ImageBitmap): MarkerSet | null {
     return dim >= minPx && dim <= maxPx;
   });
 
-  console.log("[straightenScan] sized candidates:", sized.length, "/", candidates.length,
-    `(expected marker ~${Math.round(expectedPx)}px, range ${Math.round(minPx)}-${Math.round(maxPx)}px)`);
-
-  if (sized.length < 6) {
-    console.log("[straightenScan] need 6 markers, only", sized.length, "passed size filter");
-    return null;
-  }
+  if (sized.length < 6) return null;
 
   // Pick the 6 LARGEST size-filtered candidates.
   sized.sort((a, b) => b.area - a.area);
@@ -271,7 +256,6 @@ function detectMarkers(bitmap: ImageBitmap): MarkerSet | null {
   const expectedRatio = A4_INNER_H_PT / A4_INNER_W_PT;
   const actualRatio = h / w;
   if (actualRatio < expectedRatio * 0.6 || actualRatio > expectedRatio * 1.4) {
-    console.log("[straightenScan] aspect-ratio gate failed:", { actualRatio, expectedRatio });
     return null;
   }
 
@@ -286,29 +270,16 @@ function detectMarkers(bitmap: ImageBitmap): MarkerSet | null {
   const bottomTol = Math.max(8, bottomEdgeLen * 0.025);
   const topDist = perpDistance(mt, tl, tr);
   const bottomDist = perpDistance(mb, bl, br);
-  if (topDist > topTol) {
-    console.log("[straightenScan] top-edge collinearity failed:", { topDist, topTol });
-    return null;
-  }
-  if (bottomDist > bottomTol) {
-    console.log("[straightenScan] bottom-edge collinearity failed:", { bottomDist, bottomTol });
-    return null;
-  }
+  if (topDist > topTol) return null;
+  if (bottomDist > bottomTol) return null;
 
   // Midpoint-position check: mid markers should sit roughly halfway along
   // each edge (catches the case where mt landed near a corner by coincidence)
   const tlMtAlong = projectAlong(mt, tl, tr);
   const blMbAlong = projectAlong(mb, bl, br);
-  if (tlMtAlong < 0.35 || tlMtAlong > 0.65) {
-    console.log("[straightenScan] mt position out of range:", tlMtAlong);
-    return null;
-  }
-  if (blMbAlong < 0.35 || blMbAlong > 0.65) {
-    console.log("[straightenScan] mb position out of range:", blMbAlong);
-    return null;
-  }
+  if (tlMtAlong < 0.35 || tlMtAlong > 0.65) return null;
+  if (blMbAlong < 0.35 || blMbAlong > 0.65) return null;
 
-  console.log("[straightenScan] all 6 markers verified collinear:", { tl, mt, tr, bl, mb, br });
   return { tl, tr, bl, br, mt, mb };
 }
 

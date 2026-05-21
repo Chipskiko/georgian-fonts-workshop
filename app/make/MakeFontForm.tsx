@@ -76,7 +76,9 @@ export function MakeFontForm() {
   // Token to ignore stale debounced fetches when params change rapidly
   const tunerTokenRef = useRef(0);
 
-  // Inject (and clean up) a temporary @font-face for the preview
+  // Inject (and clean up) a temporary @font-face for the preview.
+  // Uses a blob URL rather than a base64 data URL so the @font-face CSS
+  // stays tiny — the browser fetches the binary directly via the blob.
   useEffect(() => {
     if (!preview) {
       if (styleRef.current) {
@@ -86,13 +88,15 @@ export function MakeFontForm() {
       return;
     }
     const familyId = "preview-" + preview.requestedName.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const dataUrl = `data:font/ttf;base64,${preview.ttfBase64}`;
+    const bytes = Uint8Array.from(atob(preview.ttfBase64), (c) => c.charCodeAt(0));
+    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: "font/ttf" }));
     if (!styleRef.current) {
       styleRef.current = document.createElement("style");
       document.head.appendChild(styleRef.current);
     }
-    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${dataUrl}) format("truetype");font-display:swap;}`;
+    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${blobUrl}) format("truetype");font-display:swap;}`;
     return () => {
+      URL.revokeObjectURL(blobUrl);
       if (styleRef.current) {
         styleRef.current.remove();
         styleRef.current = null;

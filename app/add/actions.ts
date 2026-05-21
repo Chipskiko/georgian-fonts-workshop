@@ -7,14 +7,10 @@ import {
   deleteFont as storageDeleteFont,
   dedupeFontFilename,
 } from "@/lib/font-storage";
+import { passwordsMatch } from "@/lib/auth";
 
 const ALLOWED_EXT = [".ttf", ".otf", ".woff", ".woff2"];
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
-// Read admin password from env in production. Falls back to the original
-// hard-coded workshop password for local dev. In Vercel, set
-// ADMIN_PASSWORD as an environment variable so it isn't visible in the
-// repo.
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "vividxura";
 
 function safeSegment(s: string): string {
   return s
@@ -58,11 +54,11 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
 }
 
 export async function checkPassword(password: string): Promise<boolean> {
-  return password === ADMIN_PASSWORD;
+  return passwordsMatch(password);
 }
 
 export async function deleteFont(filename: string, password: string): Promise<{ ok: boolean; message: string }> {
-  if (password !== ADMIN_PASSWORD) {
+  if (!passwordsMatch(password)) {
     return { ok: false, message: "wrong password" };
   }
 

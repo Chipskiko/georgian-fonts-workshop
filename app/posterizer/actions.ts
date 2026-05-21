@@ -8,8 +8,8 @@ import {
   newPosterFilename,
   type StoredPoster,
 } from "@/lib/poster-storage";
+import { passwordsMatch } from "@/lib/auth";
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "vividxura";
 const MAX_BYTES = 4 * 1024 * 1024; // 4 MB — generous for an A4 PNG at 2x
 
 /** Upload a poster PNG. Called from cascade when a poster fills up. */
@@ -44,7 +44,7 @@ export async function deletePoster(
   filename: string,
   password: string,
 ): Promise<{ ok: boolean; message: string }> {
-  if (password !== ADMIN_PASSWORD) {
+  if (!passwordsMatch(password)) {
     return { ok: false, message: "wrong password" };
   }
   try {
