@@ -92,16 +92,14 @@ p {
     display: none;
   }
 
-  /* Dropdown panel — anchored to the right edge of #info. Hidden by
-     default; the details[open] selector reveals it. Setting display
-     explicitly here would override the browser's native hide-when-closed
-     behavior. */
+  /* Dropdown panel renders in normal flow inside the floated nav-mobile.
+     Float context grows to accommodate the panel, #info gets taller,
+     and the cascade content below pushes down — no overlay over the
+     controls. (Earlier this was position:absolute which floated over
+     the cascade controls/tools on mobile.) */
   .nav-mobile-panel {
     display: none;
-    position: absolute;
-    top: 100%;
-    right: 4px;
-    z-index: 20;
+    margin-top: 8px;
     background: var(--bg);
     border: 1px solid var(--fg);
     padding: 10px 14px;

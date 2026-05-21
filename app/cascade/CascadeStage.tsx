@@ -623,7 +623,15 @@ export function CascadeStage({
       }
     }, POLL_INTERVAL_MS);
 
-    window.setTimeout(() => keyInputRef.current?.focus(), 50);
+    // Auto-focus the hidden keystroke input — but ONLY on viewports
+    // wider than the mobile hamburger breakpoint. On phones, focusing
+    // an <input> pops the iOS / Android soft keyboard immediately on
+    // page load, which covers half the screen and intrudes on the
+    // drag/draw workflow. On mobile the user has to tap the stage
+    // intentionally to start typing (handlePageClick still refocuses).
+    if (window.matchMedia("(min-width: 701px)").matches) {
+      window.setTimeout(() => keyInputRef.current?.focus(), 50);
+    }
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
