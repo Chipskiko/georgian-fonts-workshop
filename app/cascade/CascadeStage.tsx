@@ -644,10 +644,6 @@ export function CascadeStage({
   const allFonts = allFontsRef.current;
   const noFontsYet = allFonts.length === 0;
   const letterCount = runtime.letters.length;
-  // Fonts present in the current in-progress poster
-  const fontsUsed = Array.from(new Set(runtime.letters.map((l) => l.fontId)))
-    .map((id) => allFonts.find((f) => f.id === id))
-    .filter((f): f is FontEntry => !!f);
 
   return (
     <div className="cascade-page" onClick={handlePageClick}>
@@ -835,15 +831,6 @@ export function CascadeStage({
         </div>
       </div>
 
-      {fontsUsed.length > 0 ? (
-        <ul className="poster-fonts-used">
-          {fontsUsed.map((f) => (
-            <li key={f.id} style={{ fontFamily: `"${f.id}"` }}>
-              {f.name}
-            </li>
-          ))}
-        </ul>
-      ) : null}
 
       {saveStatus === "saving" ? (
         <p className="cascade-toast">ინახება…</p>
