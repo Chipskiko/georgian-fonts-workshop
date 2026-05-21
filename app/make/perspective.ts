@@ -99,99 +99,14 @@ function ensureOpenCv(): Promise<void> {
   return opencvPromise;
 }
 
-/** Parse just the EXIF orientation tag (0x0112) from a JPEG. Returns 1
- * (default upright) if the file isn't a JPEG, has no EXIF block, or the
- * tag is missing. Reads only the first 64KB — the EXIF segment always
- * sits in APP1 right after the SOI marker. */
-async function readExifOrientation(file: File): Promise<number> {
-  if (!file.type.includes("jpeg") && !file.name.toLowerCase().match(/\.(jpe?g)$/)) {
-    return 1;
-  }
-  try {
-    const buf = await file.slice(0, 65536).arrayBuffer();
-    const view = new DataView(buf);
-    if (view.byteLength < 4 || view.getUint16(0, false) !== 0xffd8) return 1;
-    let offset = 2;
-    while (offset < view.byteLength - 4) {
-      const marker = view.getUint16(offset, false);
-      // APP1 (EXIF) marker
-      if (marker === 0xffe1) {
-        const segLen = view.getUint16(offset + 2, false);
-        // "Exif\0\0" signature
-        if (
-          offset + 10 < view.byteLength &&
-          view.getUint32(offset + 4, false) === 0x45786966 &&
-          view.getUint16(offset + 8, false) === 0x0000
-        ) {
-          const tiffStart = offset + 10;
-          const bom = view.getUint16(tiffStart, false);
-          const little = bom === 0x4949;
-          const ifdOff = view.getUint32(tiffStart + 4, little);
-          const ifd = tiffStart + ifdOff;
-          if (ifd + 2 > view.byteLength) return 1;
-          const count = view.getUint16(ifd, little);
-          for (let i = 0; i < count; i++) {
-            const eo = ifd + 2 + i * 12;
-            if (eo + 12 > view.byteLength) break;
-            if (view.getUint16(eo, little) === 0x0112) {
-              return view.getUint16(eo + 8, little) || 1;
-            }
-          }
-        }
-        offset += 2 + segLen;
-      } else if ((marker & 0xff00) === 0xff00) {
-        // Other APPx marker — skip
-        const segLen = view.getUint16(offset + 2, false);
-        offset += 2 + segLen;
-      } else {
-        break;
-      }
-    }
-  } catch {
-    /* fall through to default */
-  }
-  return 1;
-}
-
 async function loadImageBitmap(file: File): Promise<ImageBitmap> {
-  // Read what the EXIF tag says the orientation SHOULD be.
-  const orientation = await readExifOrientation(file);
-  const raw = await createImageBitmap(file, { imageOrientation: "none" });
-  if (orientation === 1) return raw;
-
-  // iOS Safari ignores `imageOrientation: "none"` on some versions and
-  // returns a bitmap that's ALREADY been EXIF-rotated. If we then apply
-  // our own rotation on top, the image gets squeezed (rotated again into
-  // a canvas sized for the wrong aspect ratio).
-  //
-  // Detect: for orientations 5-8 the raw sensor is landscape (width >
-  // height) and the displayed image is portrait (height > width). If the
-  // bitmap we got back is already portrait, the browser pre-rotated, so
-  // we must NOT rotate again.
-  const expectsSwap = orientation >= 5 && orientation <= 8;
-  if (expectsSwap && raw.height > raw.width) {
-    // Browser already did the work for us.
-    return raw;
-  }
-
-  // Otherwise apply the canvas rotation.
-  const canvas = document.createElement("canvas");
-  canvas.width = expectsSwap ? raw.height : raw.width;
-  canvas.height = expectsSwap ? raw.width : raw.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("no 2d context");
-  switch (orientation) {
-    case 2: ctx.transform(-1, 0, 0, 1, canvas.width, 0); break;
-    case 3: ctx.transform(-1, 0, 0, -1, canvas.width, canvas.height); break;
-    case 4: ctx.transform(1, 0, 0, -1, 0, canvas.height); break;
-    case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-    case 6: ctx.transform(0, 1, -1, 0, canvas.width, 0); break;
-    case 7: ctx.transform(0, -1, -1, 0, canvas.width, canvas.height); break;
-    case 8: ctx.transform(0, -1, 1, 0, 0, canvas.height); break;
-  }
-  ctx.drawImage(raw, 0, 0);
-  raw.close();
-  return await createImageBitmap(canvas);
+  // Spec-compliant: createImageBitmap with imageOrientation:"from-image"
+  // tells the browser to honor EXIF orientation when decoding. Works
+  // correctly on Chrome, Firefox, and Safari 17.4+. Older iOS Safari
+  // ignores the option — client-side detection will fail for portrait
+  // iPhone photos in that case, but the server pipeline applies
+  // sharp.rotate() before processing, so uploads still work end-to-end.
+  return await createImageBitmap(file, { imageOrientation: "from-image" });
 }
 
 /**
