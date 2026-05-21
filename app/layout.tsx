@@ -6,6 +6,14 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "georgian fonts workshop",
   description: "custom georgian typography from the workshop.",
+  // iOS standalone-mode flags. When a participant Adds to Home Screen,
+  // launching from the icon opens the site without Safari chrome
+  // (no URL pill, no input accessory bar) — full-bleed cascade.
+  appleWebApp: {
+    capable: true,
+    title: "ხარახლოპია",
+    statusBarStyle: "default",
+  },
 };
 
 // Lock the viewport on phones: no pinch-zoom, no double-tap zoom,
