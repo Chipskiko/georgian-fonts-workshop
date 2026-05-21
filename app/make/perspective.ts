@@ -100,7 +100,29 @@ function ensureOpenCv(): Promise<void> {
 }
 
 async function loadImageBitmap(file: File): Promise<ImageBitmap> {
-  return await createImageBitmap(file, { imageOrientation: "from-image" });
+  // iOS Safari < 17.4 ignores `imageOrientation: "from-image"` and decodes
+  // iPhone photos in their raw landscape orientation, so marker detection
+  // fails on portraits taken in the camera roll. Going through an <img>
+  // element forces the browser to apply EXIF rotation when it paints —
+  // works consistently on Safari 13+ and matches Chrome's behaviour.
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("image decode failed"));
+      i.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(img, 0, 0);
+    return await createImageBitmap(canvas);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /**
