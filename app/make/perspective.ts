@@ -99,30 +99,89 @@ function ensureOpenCv(): Promise<void> {
   return opencvPromise;
 }
 
-async function loadImageBitmap(file: File): Promise<ImageBitmap> {
-  // iOS Safari < 17.4 ignores `imageOrientation: "from-image"` and decodes
-  // iPhone photos in their raw landscape orientation, so marker detection
-  // fails on portraits taken in the camera roll. Going through an <img>
-  // element forces the browser to apply EXIF rotation when it paints —
-  // works consistently on Safari 13+ and matches Chrome's behaviour.
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error("image decode failed"));
-      i.src = url;
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("no 2d context");
-    ctx.drawImage(img, 0, 0);
-    return await createImageBitmap(canvas);
-  } finally {
-    URL.revokeObjectURL(url);
+/** Parse just the EXIF orientation tag (0x0112) from a JPEG. Returns 1
+ * (default upright) if the file isn't a JPEG, has no EXIF block, or the
+ * tag is missing. Reads only the first 64KB — the EXIF segment always
+ * sits in APP1 right after the SOI marker. */
+async function readExifOrientation(file: File): Promise<number> {
+  if (!file.type.includes("jpeg") && !file.name.toLowerCase().match(/\.(jpe?g)$/)) {
+    return 1;
   }
+  try {
+    const buf = await file.slice(0, 65536).arrayBuffer();
+    const view = new DataView(buf);
+    if (view.byteLength < 4 || view.getUint16(0, false) !== 0xffd8) return 1;
+    let offset = 2;
+    while (offset < view.byteLength - 4) {
+      const marker = view.getUint16(offset, false);
+      // APP1 (EXIF) marker
+      if (marker === 0xffe1) {
+        const segLen = view.getUint16(offset + 2, false);
+        // "Exif\0\0" signature
+        if (
+          offset + 10 < view.byteLength &&
+          view.getUint32(offset + 4, false) === 0x45786966 &&
+          view.getUint16(offset + 8, false) === 0x0000
+        ) {
+          const tiffStart = offset + 10;
+          const bom = view.getUint16(tiffStart, false);
+          const little = bom === 0x4949;
+          const ifdOff = view.getUint32(tiffStart + 4, little);
+          const ifd = tiffStart + ifdOff;
+          if (ifd + 2 > view.byteLength) return 1;
+          const count = view.getUint16(ifd, little);
+          for (let i = 0; i < count; i++) {
+            const eo = ifd + 2 + i * 12;
+            if (eo + 12 > view.byteLength) break;
+            if (view.getUint16(eo, little) === 0x0112) {
+              return view.getUint16(eo + 8, little) || 1;
+            }
+          }
+        }
+        offset += 2 + segLen;
+      } else if ((marker & 0xff00) === 0xff00) {
+        // Other APPx marker — skip
+        const segLen = view.getUint16(offset + 2, false);
+        offset += 2 + segLen;
+      } else {
+        break;
+      }
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return 1;
+}
+
+async function loadImageBitmap(file: File): Promise<ImageBitmap> {
+  // Browser auto-orientation is inconsistent across iOS Safari versions
+  // (the spec changed default behaviour mid-flight, and naturalWidth /
+  // drawImage don't agree on older builds — that's what caused the
+  // squeezed-vertically bug). Parse EXIF orientation ourselves and apply
+  // rotation explicitly via canvas transforms — browser-independent.
+  const orientation = await readExifOrientation(file);
+  const raw = await createImageBitmap(file, { imageOrientation: "none" });
+  if (orientation === 1) return raw;
+
+  // Orientation values 5-8 rotate by 90° → swap canvas width/height.
+  const swap = orientation >= 5 && orientation <= 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = swap ? raw.height : raw.width;
+  canvas.height = swap ? raw.width : raw.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  switch (orientation) {
+    case 2: ctx.transform(-1, 0, 0, 1, canvas.width, 0); break;
+    case 3: ctx.transform(-1, 0, 0, -1, canvas.width, canvas.height); break;
+    case 4: ctx.transform(1, 0, 0, -1, 0, canvas.height); break;
+    case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+    case 6: ctx.transform(0, 1, -1, 0, canvas.width, 0); break;
+    case 7: ctx.transform(0, -1, -1, 0, canvas.width, canvas.height); break;
+    case 8: ctx.transform(0, -1, 1, 0, 0, canvas.height); break;
+  }
+  ctx.drawImage(raw, 0, 0);
+  raw.close();
+  return await createImageBitmap(canvas);
 }
 
 /**
