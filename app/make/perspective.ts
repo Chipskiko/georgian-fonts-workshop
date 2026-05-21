@@ -154,20 +154,30 @@ async function readExifOrientation(file: File): Promise<number> {
 }
 
 async function loadImageBitmap(file: File): Promise<ImageBitmap> {
-  // Browser auto-orientation is inconsistent across iOS Safari versions
-  // (the spec changed default behaviour mid-flight, and naturalWidth /
-  // drawImage don't agree on older builds — that's what caused the
-  // squeezed-vertically bug). Parse EXIF orientation ourselves and apply
-  // rotation explicitly via canvas transforms — browser-independent.
+  // Read what the EXIF tag says the orientation SHOULD be.
   const orientation = await readExifOrientation(file);
   const raw = await createImageBitmap(file, { imageOrientation: "none" });
   if (orientation === 1) return raw;
 
-  // Orientation values 5-8 rotate by 90° → swap canvas width/height.
-  const swap = orientation >= 5 && orientation <= 8;
+  // iOS Safari ignores `imageOrientation: "none"` on some versions and
+  // returns a bitmap that's ALREADY been EXIF-rotated. If we then apply
+  // our own rotation on top, the image gets squeezed (rotated again into
+  // a canvas sized for the wrong aspect ratio).
+  //
+  // Detect: for orientations 5-8 the raw sensor is landscape (width >
+  // height) and the displayed image is portrait (height > width). If the
+  // bitmap we got back is already portrait, the browser pre-rotated, so
+  // we must NOT rotate again.
+  const expectsSwap = orientation >= 5 && orientation <= 8;
+  if (expectsSwap && raw.height > raw.width) {
+    // Browser already did the work for us.
+    return raw;
+  }
+
+  // Otherwise apply the canvas rotation.
   const canvas = document.createElement("canvas");
-  canvas.width = swap ? raw.height : raw.width;
-  canvas.height = swap ? raw.width : raw.height;
+  canvas.width = expectsSwap ? raw.height : raw.width;
+  canvas.height = expectsSwap ? raw.width : raw.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d context");
   switch (orientation) {
