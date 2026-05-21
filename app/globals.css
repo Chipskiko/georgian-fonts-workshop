@@ -69,17 +69,26 @@ p {
 }
 
 @media (max-width: 700px) {
+  /* Hide the brand on mobile — the hamburger is enough chrome. */
+  .infoButtons {
+    display: none;
+  }
+
   .nav-desktop {
     display: none;
   }
 
+  /* Nav-mobile spans the row with hamburger left + (when open) menu
+     items column-stacked on the right. summary and panel are siblings
+     in a flex row, so the first panel item sits on the SAME line as
+     the hamburger. */
   .nav-mobile {
-    display: block;
-    float: right;
-    margin-left: 1.5ch;
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
   }
 
-  /* Strip the default disclosure triangle. */
+  /* Strip the default disclosure triangle, anchor hamburger left. */
   .nav-toggle {
     list-style: none;
     cursor: pointer;
@@ -87,24 +96,25 @@ p {
     display: inline-flex;
     align-items: center;
     padding: 0 4px;
+    flex-shrink: 0;
   }
   .nav-toggle::-webkit-details-marker {
     display: none;
   }
 
-  /* Dropdown panel renders in normal flow inside the floated nav-mobile.
-     Float context grows to accommodate the panel, #info gets taller,
-     and the cascade content below pushes down — no overlay over the
-     controls. (Earlier this was position:absolute which floated over
-     the cascade controls/tools on mobile.) */
+  /* Menu panel: no box, transparent, right-aligned column. flex:1
+     pushes it to fill remaining row, align-items: flex-end stacks the
+     links to the right edge. */
   .nav-mobile-panel {
     display: none;
-    margin-top: 8px;
-    background: var(--bg);
-    border: 1px solid var(--fg);
-    padding: 10px 14px;
+    flex: 1;
     flex-direction: column;
-    gap: 8px;
+    align-items: flex-end;
+    gap: 6px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
     text-align: right;
     font-family: var(--ui-georgian);
     text-transform: lowercase;
