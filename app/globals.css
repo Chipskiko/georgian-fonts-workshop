@@ -238,8 +238,12 @@ p {
   padding: 1px 4px;
 }
 
-.add-page {
+.add-page-wrap {
   border-top: solid var(--fg);
+  width: 100%;
+}
+
+.add-page {
   padding: 30px 20px 60px;
   max-width: 720px;
   display: flex;

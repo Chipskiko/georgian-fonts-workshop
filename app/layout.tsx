@@ -14,6 +14,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <head>
+        {/* Preload the UI font (Xarax) so the nav doesn't flash through
+            the Times fallback on first paint. Without this the browser
+            doesn't discover the @font-face url until it parses the
+            stylesheet, so the nav renders in serif for ~100ms then
+            swaps. crossOrigin="anonymous" is required for fonts even on
+            same origin — the resource is treated as cross-origin by the
+            preload spec. */}
+        <link
+          rel="preload"
+          href="/ui-fonts/Xaraxfont4-kerned.otf"
+          as="font"
+          type="font/otf"
+          crossOrigin="anonymous"
+        />
         <style dangerouslySetInnerHTML={{ __html: css }} />
       </head>
       <body>
