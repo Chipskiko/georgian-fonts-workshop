@@ -418,7 +418,15 @@ const UNIFORM_RANGE = 30;
 // Makes the histogram more bimodal, which gives Otsu a sharper valley to
 // find in step 4 — captures faint pencil that the un-boosted normalize
 // would otherwise leave too close to paper for Otsu to split off.
-const CONTRAST_FACTOR = 2.0;
+//
+// Was 2.0; reduced to 1.5 to address "hollow circles fill in" on iPhone
+// uploads. iPhone JPEG compression smears thin outline strokes into
+// nearby interior pixels (8×8 DCT block bleed). After bg subtraction
+// those interior pixels read around 220 in normalized space; ×2.0
+// contrast + γ 2.0 pushed them below the Otsu floor and they got
+// classified as ink → the hollow filled solid. 1.5 is gentle enough to
+// keep faint pencil while not promoting JPEG-bleed haze into ink.
+const CONTRAST_FACTOR = 1.5;
 // Gamma curve applied after the linear contrast stretch. Both endpoints
 // (0 and 255) stay fixed; midtones get pushed darker via output =
 // (input/255)^GAMMA × 255. GAMMA > 1 = darker midtones, GAMMA = 1 =

@@ -50,6 +50,28 @@ async function _getFonts(): Promise<FontEntry[]> {
       format,
     });
   }
+  // Disambiguate identical display names. When two workshop participants
+  // both name their font "კატა" (or any other clash), the picker would
+  // show two indistinguishable rows. Both fonts render correctly under
+  // the hood (each has a unique CSS @font-face name derived from the
+  // random suffix in their filename), but the human label needs to tell
+  // them apart. Strategy: keep the first occurrence's name unmodified,
+  // append " (2)", " (3)", ... to subsequent ones. Use the filename for
+  // tiebreaking inside a group so the same upload always gets the same
+  // suffix between renders.
+  const groups = new Map<string, FontEntry[]>();
+  for (const f of fonts) {
+    const list = groups.get(f.name);
+    if (list) list.push(f);
+    else groups.set(f.name, [f]);
+  }
+  for (const list of groups.values()) {
+    if (list.length <= 1) continue;
+    list.sort((a, b) => a.filename.localeCompare(b.filename));
+    for (let i = 1; i < list.length; i++) {
+      list[i].name = `${list[i].name} (${i + 1})`;
+    }
+  }
   return fonts.sort((a, b) => a.name.localeCompare(b.name));
 }
 

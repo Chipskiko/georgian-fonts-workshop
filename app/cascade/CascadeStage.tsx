@@ -638,15 +638,20 @@ export function CascadeStage({
         rotateHandleRef.current = { letterId: selectedLetterId };
         return;
       }
-      // TWO-FINGER PINCH-ROTATE detection: this is the 2nd pointer
-      // landing while finger #1 is already mid-drag on a letter. Snap
-      // the initial pointer-pair angle + the letter's current body
-      // angle; subsequent pointermoves use the delta. Skip the rest of
-      // the down-handler so the 2nd finger doesn't try to grab its own
-      // letter (or deselect anything).
+      // TWO-FINGER PINCH-ROTATE detection: 2nd pointer lands and a
+      // letter is currently selected. Works in two scenarios:
+      //   1) Finger 1 is still down on the letter (active drag) and
+      //      the user puts finger 2 down anywhere to rotate.
+      //   2) User already tapped the letter to select it (drag ended,
+      //      selection persists) and now uses two fingers somewhere
+      //      on the stage to rotate.
+      // The previous condition required dragRef.current.letterId — so
+      // scenario 2 silently didn't work and users on phone couldn't
+      // rotate without an awkward "hold the letter + tap with another
+      // finger" gesture. Using selectedLetterId fixes that.
       if (
         pointersRef.current.size === 2 &&
-        dragRef.current.letterId !== null &&
+        selectedLetterId !== null &&
         !twoFingerRef.current.active
       ) {
         const pts = [...pointersRef.current.values()];
@@ -654,9 +659,7 @@ export function CascadeStage({
           pts[1].clientY - pts[0].clientY,
           pts[1].clientX - pts[0].clientX,
         );
-        const letter = runtime.letters.find(
-          (l) => l.id === dragRef.current.letterId,
-        );
+        const letter = runtime.letters.find((l) => l.id === selectedLetterId);
         if (letter) {
           twoFingerRef.current = {
             active: true,
@@ -1195,10 +1198,13 @@ export function CascadeStage({
             const side = sel.size + 8;
             // Handle sits directly above the letter in its LOCAL frame
             // (so it rotates with the letter — visual feedback that
-             // rotation works). Distance: half-side + breathing room +
+            // rotation works). Distance: half-side + breathing room +
             // half-handle so the line+circle don't overlap the bbox.
-            const handleDist = side / 2 + 18;
-            const handleR = 8; // px radius
+            // Radius 14 (28px diameter) is large enough to comfortably
+            // hit on phone (iOS recommends ≥44px but the surrounding
+            // line + visual chunk make this hittable in practice).
+            const handleR = 14;
+            const handleDist = side / 2 + 18 + handleR;
             return (
               <>
                 {/* Bounding box: rotates with the letter via the same
