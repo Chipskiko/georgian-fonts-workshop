@@ -550,6 +550,15 @@ p {
     min-width: 0;
     width: 100%;
   }
+  /* Form buttons full-width on mobile so they line up with the inputs
+     above them — otherwise their content-width + flex-start alignment
+     leaves a big empty gap on the right, making the page look
+     asymmetric even though the actual padding is symmetric. */
+  .add-form button,
+  .admin-gate button {
+    align-self: stretch;
+    width: 100%;
+  }
   /* Gallery: 2-column grid on phones. Defaults to auto-fill min 220px
      which only fits one column at mobile widths — force exactly 2 so
      posters can be browsed at a glance instead of scrolling one tile
