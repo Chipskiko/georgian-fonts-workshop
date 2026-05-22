@@ -53,11 +53,10 @@ p {
 
 #info {
   position: relative;
-  width: 99vw;
+  width: 100%;
   min-width: 350px;
   margin: 20px 0;
   padding-top: 5px;
-  padding-left: 0.4ch;
   font-family: var(--ui-georgian);
   text-transform: lowercase;
   font-size: 1.3em;
@@ -168,7 +167,7 @@ p {
 }
 
 #contents {
-  width: 99vw;
+  width: 100%;
   min-width: 350px;
 }
 
@@ -315,8 +314,11 @@ p {
 }
 
 .make-steps {
-  list-style-position: outside;
-  padding-left: 1.5em;
+  /* list-style-position: inside puts "1." flush with the content edge
+     instead of in an extra padding-left gutter — so the numbered list
+     starts at the same x as every other element on the page. */
+  list-style-position: inside;
+  padding-left: 0;
   margin: 0;
 }
 
