@@ -21,6 +21,13 @@ export const metadata: Metadata = {
 // device width and zooming would misalign the A4 stage's tap targets
 // and the iOS Safari keyboard's auto-zoom-on-focus would shift the
 // whole layout.
+// Force layout to re-render on every request so newly uploaded fonts
+// show up in the @font-face <style> block. By default
+// revalidatePath("/") only invalidates the home page — NOT the root
+// layout — so fontFaceCss(fonts) ran with a stale snapshot and any
+// font added since first render rendered in the system fallback.
+export const dynamic = "force-dynamic";
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
