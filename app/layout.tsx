@@ -61,6 +61,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               document.addEventListener('gesturestart', e => e.preventDefault());
               document.addEventListener('gesturechange', e => e.preventDefault());
               document.addEventListener('gestureend', e => e.preventDefault());
+              // Outside-tap close for the hamburger drawer. Native <details>
+              // doesn't auto-close on outside click, so listen at document
+              // level: any click that isn't inside the drawer or on the
+              // toggle dismisses it.
+              document.addEventListener('click', (e) => {
+                const details = document.querySelector('details.nav-mobile');
+                if (!details || !details.open) return;
+                if (e.target && e.target.closest && e.target.closest('details.nav-mobile')) return;
+                details.open = false;
+              });
             `,
           }}
         />

@@ -248,12 +248,22 @@ export function CascadeStage({
   // Switching to the "type" tool opens the soft keyboard (focus the
   // hidden input); switching away blurs to dismiss the keyboard so it
   // stops eating screen space during drag/draw/erase.
+  // Also toggles a body class that enables "focus mode" on mobile:
+  // hides the page nav so the cascade gets full vertical bleed when
+  // typing. Switching to any non-T tool exits focus mode.
   useEffect(() => {
     if (tool === "type") {
       keyInputRef.current?.focus();
+      if (window.matchMedia("(max-width: 700px)").matches) {
+        document.body.classList.add("cascade-focused");
+      }
     } else {
       keyInputRef.current?.blur();
+      document.body.classList.remove("cascade-focused");
     }
+    return () => {
+      document.body.classList.remove("cascade-focused");
+    };
   }, [tool]);
 
   async function ensureFontFaceLoaded(font: FontEntry) {
@@ -683,44 +693,11 @@ export function CascadeStage({
           ჯერ შრიფტი არ არის — შექმენი ერთი <a href="/add">აქ</a>, შემდეგ დაბრუნდი.
         </p>
       ) : (
-        <div className="cascade-controls">
-          <label className="poster-color">
-            <span>ფონი</span>
-            <input
-              type="color"
-              value={bg}
-              onChange={(e) => setBg(e.target.value)}
-            />
-          </label>
-          <label className="poster-color">
-            <span>ტექსტი</span>
-            <input
-              type="color"
-              value={fg}
-              onChange={(e) => setFg(e.target.value)}
-            />
-          </label>
-          <div className="poster-font-picker">
-            <span>შრიფტი</span>
-            <select
-              value={currentFontId ?? ""}
-              onChange={(e) => setCurrentFontId(e.target.value)}
-            >
-              {allFonts.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="button"
-            className="cascade-save-btn"
-            onClick={() => void saveAndReset()}
-            disabled={letterCount === 0 || saveStatus === "saving"}
-          >
-            შენახვა
-          </button>
+        <>
+          {/* Tools above the canvas (mobile + desktop). Tools are the
+              "mode switch" — pulled out of cascade-controls so they
+              can sit above the stage and the input controls can sit
+              below it. */}
           <div className="cascade-tool-group" role="toolbar" aria-label="tools">
             <button
               type="button"
@@ -824,7 +801,7 @@ export function CascadeStage({
               </svg>
             </button>
           </div>
-        </div>
+        </>
       )}
 
       <div className="cascade-a4-stage-wrap">
@@ -870,6 +847,52 @@ export function CascadeStage({
         </div>
       </div>
 
+      {/* Input controls BELOW the canvas: color pickers + font dropdown
+          + save button. Was previously in a single row above the canvas;
+          moved here per the mobile-first reorder so the canvas gets the
+          dominant visual weight, with tools (mode) above and inputs
+          (data) below. */}
+      {!noFontsYet ? (
+        <div className="cascade-controls">
+          <label className="poster-color">
+            <span>ფონი</span>
+            <input
+              type="color"
+              value={bg}
+              onChange={(e) => setBg(e.target.value)}
+            />
+          </label>
+          <label className="poster-color">
+            <span>ტექსტი</span>
+            <input
+              type="color"
+              value={fg}
+              onChange={(e) => setFg(e.target.value)}
+            />
+          </label>
+          <div className="poster-font-picker">
+            <span>შრიფტი</span>
+            <select
+              value={currentFontId ?? ""}
+              onChange={(e) => setCurrentFontId(e.target.value)}
+            >
+              {allFonts.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="cascade-save-btn"
+            onClick={() => void saveAndReset()}
+            disabled={letterCount === 0 || saveStatus === "saving"}
+          >
+            შენახვა
+          </button>
+        </div>
+      ) : null}
 
       {saveStatus === "saving" ? (
         <p className="cascade-toast">ინახება…</p>

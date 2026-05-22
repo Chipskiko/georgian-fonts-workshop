@@ -82,12 +82,12 @@ p {
 }
 
 @media (max-width: 700px) {
-  /* Match cascade-page horizontal padding (16px) so the mobile nav's
-     right edge aligns with the right edge of the cascade poster view. */
+  /* Match cascade-page horizontal padding (20px) so the mobile nav's
+     edges align with the cascade content. */
   #info {
     width: 100%;
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 20px;
+    padding-right: 20px;
   }
 
   .nav-desktop {
@@ -121,26 +121,56 @@ p {
     display: none;
   }
 
-  /* Menu panel: no box, transparent, content-width column on the
-     right. align-items: flex-end keeps each item's right edge flush
-     with the panel's right (which is the nav-mobile's right, which
-     is the cascade poster's right). */
+  /* Menu panel: left-edge drawer that slides in as an overlay. The
+     yellow border-right is the "stroke" anchoring the drawer visually.
+     position:fixed pulls it out of #info's flow — the cascade content
+     underneath doesn't reflow when the drawer opens. */
   .nav-mobile-panel {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 70vw;
+    max-width: 280px;
+    z-index: 100;
+    background: var(--bg);
+    border-right: 4px solid var(--fg);
+    padding: 60px 24px 24px;
+    display: flex;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-    background: transparent;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    text-align: right;
+    align-items: flex-start;
+    gap: 14px;
+    text-align: left;
     font-family: var(--ui-georgian);
     text-transform: lowercase;
+    font-size: 1.4em;
+    /* Slide off-screen by default. */
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
   }
 
   .nav-mobile[open] .nav-mobile-panel {
-    display: flex;
+    transform: translateX(0);
+  }
+
+  /* Backdrop catches outside-clicks. Sits above the page content
+     but below the drawer. Visible only when drawer is open. */
+  .nav-mobile[open]::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 99;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  /* Keep the hamburger toggle above the backdrop so it's tappable
+     when the drawer is open (acts as a second close affordance). */
+  .nav-toggle {
+    position: relative;
+    z-index: 101;
   }
 
   .nav-mobile-panel a {
@@ -933,15 +963,33 @@ p {
    spawn coords are unchanged), only the visual is shrunk. The wrap
    reserves just the scaled height so content below sits flush. */
 @media (max-width: 700px) {
+  /* 20px page padding on all sides so the canvas + tools + controls
+     never touch the viewport edge. --reserved-h accounts for the nav
+     row + tool palette + controls row + paddings; in focus mode the
+     nav is hidden so reserved shrinks and the canvas grows. */
+  .cascade-page {
+    padding: 20px;
+    gap: 14px;
+    --reserved-h: 220px;
+  }
+  body.cascade-focused .cascade-page {
+    --reserved-h: 170px;
+  }
+
   .cascade-a4-stage-wrap {
-    /* All three min() args must be unitless. CSS Values 4 gives
-       `length / length → number`, so divide by 420px / 594px (NOT
-       unitless 420 / 594) to keep types consistent. */
-    --cascade-scale: min(1, calc((100vw - 32px) / 420px), calc((100dvh - 300px) / 594px));
+    /* Smart scale: shrink the canvas so the WHOLE stack (nav + tools
+       + canvas + controls) always fits inside viewport - 40px. All
+       three min() args must be unitless — CSS Values 4 gives
+       length / length → number, so divide by 420px / 594px to keep
+       types consistent. */
+    --cascade-scale: min(
+      1,
+      calc((100vw - 40px) / 420px),
+      calc((100dvh - var(--reserved-h)) / 594px)
+    );
     /* Wrap fits the SCALED visual exactly. The stage's layout box is
        still 420×594 (so physics + spawn coords don't change), but the
-       wrap clips the layout-box overflow so the page doesn't gain a
-       horizontal scrollbar. */
+       wrap clips the layout-box overflow. */
     width: calc(420px * var(--cascade-scale));
     height: calc(594px * var(--cascade-scale));
     overflow: hidden;
@@ -951,6 +999,14 @@ p {
        layout-box's right/bottom overflow is what the wrap clips. */
     transform: scale(var(--cascade-scale));
     transform-origin: top left;
+  }
+
+  /* Focus mode (T tool active on mobile): hide the page nav so the
+     canvas dominates. Drawer (.nav-mobile) is also inside #info so it
+     hides too — but the hamburger can be re-summoned by exiting focus
+     mode (tap another tool). */
+  body.cascade-focused #info {
+    display: none;
   }
 }
 
