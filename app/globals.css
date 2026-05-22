@@ -549,6 +549,14 @@ p {
   padding: 18px 0;
 }
 
+/* When two .add-form siblings stack (MakeFontForm above UploadForm),
+   the bottom border of the first and the top border of the second
+   render as two visually-adjacent dashed lines. Collapse to one by
+   dropping the top border on every .add-form that follows another. */
+.add-form + .add-form {
+  border-top: 0;
+}
+
 .add-row {
   display: grid;
   grid-template-columns: 130px 1fr;
@@ -698,9 +706,11 @@ p {
 }
 
 .admin-section h3 {
+  font-family: var(--ui-georgian);
+  text-transform: lowercase;
   font-size: 1em;
   font-weight: normal;
-  font-style: italic;
+  font-style: normal;
   margin: 0 0 14px;
 }
 
@@ -722,7 +732,9 @@ p {
 
 .admin-gate button {
   align-self: flex-start;
-  font: inherit;
+  font-family: var(--ui-georgian);
+  font-size: 1.1em;
+  text-transform: lowercase;
   background: var(--fg);
   color: var(--bg);
   border: 1px solid var(--fg);
@@ -782,6 +794,11 @@ p {
 }
 
 .admin-designer {
+  /* UI Georgian font so "ავტორი" renders in the same chrome face used
+     across the rest of the site. Latin designer names fall through to
+     Times via Xarax's @font-face unicode-range. */
+  font-family: var(--ui-georgian);
+  font-style: normal;
   font-size: 0.55em;
   color: var(--fg-soft);
   flex: 1;

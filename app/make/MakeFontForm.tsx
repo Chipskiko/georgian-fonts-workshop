@@ -291,14 +291,13 @@ export function MakeFontForm() {
       ? "ვასწორებ..."
       : stage === "tracing"
         ? "ვაგზავნი..."
-        : "გააკეთე შრიფტი";
+        : "გააკეთე";
 
   return (
     <>
       <ol className="add-blurb make-blurb make-steps">
         <li>
-          <a href="/api/template" download className="make-link">გადმოწერე ტემპლეიტი</a>{" "}
-          (a4 pdf)
+          <a href="/api/template" download className="make-link">გადმოწერე შაბლონი</a>
         </li>
         <li>დაბეჭდე</li>
         <li>შეავსე</li>

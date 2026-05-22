@@ -17,9 +17,6 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
   const nameStyle = isGeorgian(font.name)
     ? { fontFamily: "var(--ui-georgian)" }
     : undefined;
-  const designerStyle = isGeorgian(font.designer)
-    ? { fontFamily: "var(--ui-georgian)" }
-    : undefined;
 
   return (
     <div className={`collectionContainers${open ? " open" : ""}`}>
@@ -45,9 +42,14 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
             <span className="meta-text specimen-name">
               <strong style={nameStyle}>{font.name}</strong>
               {font.designer ? (
-                <em>
+                // UI Georgian font on the whole "— ავტორი {name}" run so
+                // "ავტორი" matches the rest of the site's chrome.
+                // Latin-character designer names fall through to Times
+                // via Xarax's @font-face unicode-range, so a Latin name
+                // still renders sensibly.
+                <em style={{ fontFamily: "var(--ui-georgian)" }}>
                   {" — ავტორი "}
-                  <span style={designerStyle}>{font.designer}</span>
+                  {font.designer}
                 </em>
               ) : null}
             </span>
