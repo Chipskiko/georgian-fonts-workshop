@@ -525,12 +525,23 @@ p {
 }
 
 /* On phones the 130px label column squeezes the input to ~190px and
-   long file names get clipped — stack vertically instead. */
+   long file names get clipped — stack vertically instead. Also bump
+   the page horizontal padding so left/right margins are symmetric and
+   match the cascade page's 40px breathing room, and clamp input
+   min-width so form controls can't push past their grid cell. */
 @media (max-width: 600px) {
+  .add-page {
+    padding: 24px 24px 40px;
+  }
   .add-row {
     grid-template-columns: 1fr;
     align-items: stretch;
     gap: 4px;
+  }
+  .add-row input[type="text"],
+  .add-row input[type="password"] {
+    min-width: 0;
+    width: 100%;
   }
 }
 
