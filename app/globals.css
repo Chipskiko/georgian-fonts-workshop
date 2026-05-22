@@ -82,12 +82,12 @@ p {
 }
 
 @media (max-width: 700px) {
-  /* Match cascade-page horizontal padding (20px) so the mobile nav's
+  /* Match cascade-page horizontal padding (40px) so the mobile nav's
      edges align with the cascade content. */
   #info {
     width: 100%;
-    padding-left: 20px;
-    padding-right: 20px;
+    padding-left: 40px;
+    padding-right: 40px;
   }
 
   .nav-desktop {
@@ -121,31 +121,26 @@ p {
     display: none;
   }
 
-  /* Menu panel: left-edge drawer that slides in as an overlay. The
-     yellow border-right is the "stroke" anchoring the drawer visually.
-     position:fixed pulls it out of #info's flow — the cascade content
-     underneath doesn't reflow when the drawer opens. */
+  /* Full-screen overlay menu. Covers the entire viewport when open
+     so it's impossible to miss-tap a background control while
+     navigating. The yellow inset border is the visual frame. */
   .nav-mobile-panel {
     position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: 70vw;
-    max-width: 280px;
+    inset: 0;
     z-index: 100;
     background: var(--bg);
-    border-right: 4px solid var(--fg);
-    padding: 60px 24px 24px;
+    padding: 60px 40px 40px;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
-    text-align: left;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    text-align: center;
     font-family: var(--ui-georgian);
     text-transform: lowercase;
-    font-size: 1.4em;
-    /* Slide off-screen by default. */
-    transform: translateX(-105%);
+    font-size: 2em;
+    /* Fade + slide from left for a soft transition. */
+    transform: translateX(-100%);
     transition: transform 0.2s ease;
   }
 
@@ -153,21 +148,8 @@ p {
     transform: translateX(0);
   }
 
-  /* Backdrop catches outside-clicks. Sits above the page content
-     but below the drawer. Visible only when drawer is open. */
-  .nav-mobile[open]::before {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 99;
-    background: rgba(0, 0, 0, 0.35);
-  }
-
-  /* Keep the hamburger toggle above the backdrop so it's tappable
-     when the drawer is open (acts as a second close affordance). */
+  /* Keep the hamburger toggle above the menu so it's tappable when
+     the menu is open (acts as the close affordance). */
   .nav-toggle {
     position: relative;
     z-index: 101;
@@ -963,28 +945,29 @@ p {
    spawn coords are unchanged), only the visual is shrunk. The wrap
    reserves just the scaled height so content below sits flush. */
 @media (max-width: 700px) {
-  /* 20px page padding on all sides so the canvas + tools + controls
-     never touch the viewport edge. --reserved-h accounts for the nav
-     row + tool palette + controls row + paddings; in focus mode the
-     nav is hidden so reserved shrinks and the canvas grows. */
+  /* 40px page padding on all sides so the canvas + tools + controls
+     have breathing room from the viewport edges. --reserved-h
+     accounts for nav + tool palette + controls row + paddings; in
+     focus mode the nav is hidden so reserved shrinks and the canvas
+     grows. */
   .cascade-page {
-    padding: 20px;
+    padding: 40px;
     gap: 14px;
-    --reserved-h: 220px;
+    --reserved-h: 260px;
   }
   body.cascade-focused .cascade-page {
-    --reserved-h: 170px;
+    --reserved-h: 210px;
   }
 
   .cascade-a4-stage-wrap {
-    /* Smart scale: shrink the canvas so the WHOLE stack (nav + tools
-       + canvas + controls) always fits inside viewport - 40px. All
-       three min() args must be unitless — CSS Values 4 gives
+    /* Smart scale: shrink the canvas so the WHOLE stack always fits
+       inside viewport - 80px (40px padding on each side). All three
+       min() args must be unitless — CSS Values 4 gives
        length / length → number, so divide by 420px / 594px to keep
        types consistent. */
     --cascade-scale: min(
       1,
-      calc((100vw - 40px) / 420px),
+      calc((100vw - 80px) / 420px),
       calc((100dvh - var(--reserved-h)) / 594px)
     );
     /* Wrap fits the SCALED visual exactly. The stage's layout box is
