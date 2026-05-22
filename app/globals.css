@@ -550,6 +550,21 @@ p {
     min-width: 0;
     width: 100%;
   }
+  /* Gallery: 2-column grid on phones. Defaults to auto-fill min 220px
+     which only fits one column at mobile widths — force exactly 2 so
+     posters can be browsed at a glance instead of scrolling one tile
+     at a time. */
+  .gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .gallery-tile {
+    padding: 4px;
+    gap: 4px;
+  }
+  .gallery-tile-meta {
+    font-size: 0.85em;
+  }
 }
 
 .add-row > span {
