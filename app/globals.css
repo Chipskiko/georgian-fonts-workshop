@@ -557,6 +557,15 @@ p {
   border-top: 0;
 }
 
+/* Drop the bottom dashed border on the LAST .add-form (no .add-form
+   sibling after it). The next thing on the page is .admin-section,
+   which already provides its own SOLID top border — without this rule
+   you see "...upload button | dashed line | solid line..." stacked
+   right on top of each other, which read as visual noise. */
+.add-form:not(:has(+ .add-form)) {
+  border-bottom: 0;
+}
+
 .add-row {
   display: grid;
   grid-template-columns: 130px 1fr;
