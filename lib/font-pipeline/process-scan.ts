@@ -93,6 +93,22 @@ const TRACE_OPTIONS: potrace.PotraceOptions = {
   alphaMax: 1.2,
 };
 
+// Debug images returned via server actions are encoded as JPEG instead
+// of PNG. Reason: React Server Components / Flight has an
+// `_arraySizeLimit` of 1,000,000 on the wire-format string-length count
+// when serializing action responses. A 1200×~1700 PNG of complex iPhone
+// scan content runs ~1 MB → base64 ~1.33 M chars → over the ceiling →
+// "Maximum array nesting exceeded" thrown on the client decoder.
+// JPEG quality 90 of the same content is typically ~100-400 KB,
+// comfortably under the ceiling regardless of scan complexity. The
+// debug images are inspection aids, not pixel-perfect outputs, so the
+// JPEG artifacts on SVG overlay text are acceptable.
+//
+// Note: the pngBase64 field name in DebugResult etc. is kept for
+// backwards compat — the BYTES are JPEG now. Client renderers must use
+// `data:image/jpeg;base64,...` prefix when constructing <img src>.
+const DEBUG_JPEG_QUALITY = 90;
+
 // =====================================================================
 //  Public entry points
 // =====================================================================
@@ -721,11 +737,13 @@ export async function renderDetectionDebug(buffer: Buffer): Promise<{
     raw: { width: DETECT_W, height: detectH, channels: 1 },
   })
     .resize(PREVIEW_W, previewH, { fit: "fill" })
-    .png()
+    .jpeg({ quality: DEBUG_JPEG_QUALITY })
     .composite([{ input: Buffer.from(overlaySvg) }])
     .toBuffer();
 
   return {
+    // Field is named pngBase64 for backwards-compat with the type, but
+    // the bytes are JPEG now — see DEBUG_JPEG_QUALITY for why.
     pngBase64: composited.toString("base64"),
     width: PREVIEW_W,
     height: previewH,
@@ -790,7 +808,7 @@ export async function renderDebugOverlay(buffer: Buffer): Promise<{
     raw: { width: warped.width, height: warped.height, channels: 1 },
   })
     .resize(PREVIEW_W, previewH, { fit: "fill" })
-    .png()
+    .jpeg({ quality: DEBUG_JPEG_QUALITY })
     .composite([{ input: Buffer.from(overlaySvg) }])
     .toBuffer();
 
@@ -1476,7 +1494,7 @@ export async function renderDebugView(
       raw: { width: DETECT_W, height: detectH, channels: 1 },
     })
       .resize(PREVIEW_W, previewH, { fit: "fill" })
-      .png()
+      .jpeg({ quality: DEBUG_JPEG_QUALITY })
       .toBuffer();
     return {
       ...baseMeta,
@@ -1611,7 +1629,7 @@ export async function renderDebugView(
 
     const composited = await sharp(resizedWarped)
       .composite([{ input: Buffer.from(overlaySvg) }])
-      .png()
+      .jpeg({ quality: DEBUG_JPEG_QUALITY })
       .toBuffer();
 
     return {
@@ -1810,7 +1828,7 @@ async function renderCellsGrid(
   const previewGridH = Math.round(gridH * (PREVIEW_GRID_W / gridW));
   const png = await sharp(tiledPng)
     .resize(PREVIEW_GRID_W, previewGridH, { fit: "fill", kernel: "lanczos3" })
-    .png()
+    .jpeg({ quality: DEBUG_JPEG_QUALITY })
     .toBuffer();
 
   return {
@@ -1882,7 +1900,7 @@ async function renderCandidatesImage(
     raw: { width: detectW, height: detectH, channels: 1 },
   })
     .resize(PREVIEW_W, previewH, { fit: "fill" })
-    .png()
+    .jpeg({ quality: DEBUG_JPEG_QUALITY })
     .composite([{ input: Buffer.from(overlaySvg) }])
     .toBuffer();
 

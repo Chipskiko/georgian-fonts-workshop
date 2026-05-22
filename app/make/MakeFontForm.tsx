@@ -377,7 +377,7 @@ export function MakeFontForm() {
                 {debug.cellCount} cells detected — cyan dots = markers, pink rects = cell crops
               </p>
               <img
-                src={`data:image/png;base64,${debug.pngBase64}`}
+                src={`data:image/jpeg;base64,${debug.pngBase64}`}
                 width={debug.width}
                 height={debug.height}
                 alt="debug overlay"
@@ -400,7 +400,7 @@ export function MakeFontForm() {
                 {debugFallback.thresholdUsed}. green = top 4 (would be picked), yellow = extras.
               </p>
               <img
-                src={`data:image/png;base64,${debugFallback.pngBase64}`}
+                src={`data:image/jpeg;base64,${debugFallback.pngBase64}`}
                 width={debugFallback.width}
                 height={debugFallback.height}
                 alt="detection debug"
@@ -468,7 +468,7 @@ export function MakeFontForm() {
                 {debug.cellCount} cells detected — cyan dots = markers, pink rects = cell crops
               </p>
               <img
-                src={`data:image/png;base64,${debug.pngBase64}`}
+                src={`data:image/jpeg;base64,${debug.pngBase64}`}
                 width={debug.width}
                 height={debug.height}
                 alt="debug overlay"
@@ -587,7 +587,7 @@ function TunerPanel({
 
       {data ? (
         <img
-          src={`data:image/png;base64,${data.pngBase64}`}
+          src={`data:image/jpeg;base64,${data.pngBase64}`}
           width={data.width}
           height={data.height}
           alt={`debug ${data.view}`}
