@@ -110,7 +110,53 @@ export function buildFont(
     glyphs,
   });
 
+  // CRITICAL: backfill the Macintosh name table with ASCII-safe entries.
+  //
+  // opentype.js writes name records for three platforms — Unicode,
+  // Windows (UTF-16), Macintosh (Mac Roman). Mac Roman is a 256-char
+  // Latin set with NO Georgian (or anything outside Latin-1 + a few
+  // extras). When the family name can't be encoded in Mac Roman,
+  // opentype.js silently OMITS the entry rather than transliterating.
+  //
+  // CoreText (the font loader on macOS + iOS Safari + Chrome on Mac)
+  // reads the Macintosh table during font registration. With no
+  // fontFamily / fullName / postScriptName there, it refuses to register
+  // the font — the @font-face declaration looks valid, the URL responds
+  // 200 with the right Content-Type, but the browser falls back to
+  // Times. Latin-named fonts (like "Xara1") work because their Mac
+  // table is complete; Georgian-named fonts silently fail.
+  //
+  // Fix: populate Mac entries with an ASCII transliteration. The Unicode
+  // + Windows tables keep the Georgian name (what the OS shows when the
+  // font is installed); Mac entries just need to exist so CoreText
+  // accepts the font for web use.
+  const ascii = stripToAscii(meta.familyName) || "GeorgianWorkshopFont";
+  // opentype.js's .names.macintosh is built lazily and may be missing
+  // entirely if no Mac-Roman-safe entries were generated. Ensure the
+  // object exists before assigning.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const names = font.names as any;
+  names.macintosh = names.macintosh ?? {};
+  names.macintosh.fontFamily = { en: ascii };
+  names.macintosh.fullName = { en: `${ascii} Regular` };
+  names.macintosh.postScriptName = { en: `${ascii}-Regular` };
+  names.macintosh.uniqueID = { en: `: ${ascii} Regular` };
+
   return new Uint8Array(font.toArrayBuffer());
+}
+
+/** Strip every character that Mac Roman can't represent. We use the
+ *  Basic ASCII printable range (0x20–0x7E) as the safe subset — Mac
+ *  Roman actually has more, but ASCII is universally safe and any
+ *  surviving characters become an unambiguous fallback name. */
+function stripToAscii(s: string): string {
+  return s
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[^\w-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 /**
