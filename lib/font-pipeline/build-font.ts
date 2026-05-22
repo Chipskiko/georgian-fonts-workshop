@@ -130,17 +130,32 @@ export function buildFont(
   // + Windows tables keep the Georgian name (what the OS shows when the
   // font is installed); Mac entries just need to exist so CoreText
   // accepts the font for web use.
-  const ascii = stripToAscii(meta.familyName) || "GeorgianWorkshopFont";
+  //
+  // CRITICAL: append a short random tag to the Mac names so multiple
+  // Georgian-named fonts don't collide on the same fallback name. The
+  // PostScript name field is REQUIRED to be globally unique per the
+  // OpenType spec — when two installed fonts share one, CoreText
+  // registers only the first and the second silently fails to render.
+  // This is the bug that caused the second Georgian-named upload to
+  // fall back to Times on Safari/Chrome even after the c9d55df fix.
+  const asciiBase = stripToAscii(meta.familyName) || "GeorgianWorkshopFont";
+  // 6 chars from Math.random's base-36 string. 36^6 ≈ 2.1 billion, so
+  // the probability of two builds in the lifetime of the workshop
+  // generating the same tag is vanishingly small. This tag is internal-
+  // only — never displayed in the picker (the random suffix in the
+  // filename is stripped by toName() in lib/fonts.ts).
+  const macUnique = Math.random().toString(36).slice(2, 8).padStart(6, "0");
+  const macFamily = `${asciiBase}-${macUnique}`;
   // opentype.js's .names.macintosh is built lazily and may be missing
   // entirely if no Mac-Roman-safe entries were generated. Ensure the
   // object exists before assigning.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const names = font.names as any;
   names.macintosh = names.macintosh ?? {};
-  names.macintosh.fontFamily = { en: ascii };
-  names.macintosh.fullName = { en: `${ascii} Regular` };
-  names.macintosh.postScriptName = { en: `${ascii}-Regular` };
-  names.macintosh.uniqueID = { en: `: ${ascii} Regular` };
+  names.macintosh.fontFamily = { en: macFamily };
+  names.macintosh.fullName = { en: `${macFamily} Regular` };
+  names.macintosh.postScriptName = { en: `${macFamily}-Regular` };
+  names.macintosh.uniqueID = { en: `: ${macFamily} Regular` };
 
   return new Uint8Array(font.toArrayBuffer());
 }
