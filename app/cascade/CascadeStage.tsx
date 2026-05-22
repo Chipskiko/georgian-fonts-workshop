@@ -224,6 +224,47 @@ export function CascadeStage({
     offsetX: number;
     offsetY: number;
   }>({ letterId: null, offsetX: 0, offsetY: 0 });
+  // Which letter currently has its rotation handle + bounding box visible.
+  // Set when a letter is grabbed in move mode; cleared when the user
+  // taps an empty area or switches to a non-move tool. State (not ref)
+  // because the overlay JSX needs to re-render on change.
+  const [selectedLetterId, setSelectedLetterId] = useState<number | null>(null);
+  // Rotation-handle drag state. Independent of dragRef so a tap-on-handle
+  // doesn't trigger translation logic. The handle is rendered as a div
+  // anchored to the selected letter; pointerdown on the handle starts
+  // rotate mode, pointermove computes a new angle from the pointer
+  // position relative to the letter center, pointerup ends it.
+  const rotateHandleRef = useRef<{ letterId: number | null }>({
+    letterId: null,
+  });
+  // All currently-active pointers on the stage. React only fires events
+  // for one pointer at a time, so the only way to detect multi-touch
+  // (2-finger pinch-rotate) is to remember the others. Keyed by
+  // pointerId; insertion order is preserved by Map so [...values()][0]
+  // is reliably the FIRST pointer that landed.
+  const pointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(
+    new Map(),
+  );
+  // Two-finger pinch-rotate snapshot. Taken when a 2nd finger lands on
+  // the stage while finger #1 is already dragging a letter. We freeze
+  // (a) the angle between the two pointers and (b) the letter's body
+  // angle at that moment. Each subsequent pointermove computes the
+  // current pointer-pair angle and applies the DELTA to the letter, so
+  // rotation is "additive" and the letter doesn't snap on touch-down.
+  const twoFingerRef = useRef<{
+    active: boolean;
+    letterId: number | null;
+    initialPointersAngle: number;
+    initialBodyAngle: number;
+  }>({ active: false, letterId: null, initialPointersAngle: 0, initialBodyAngle: 0 });
+  // Desktop fallback for rotation: shift+drag a letter rotates instead
+  // of translating. Same snapshot-and-delta pattern as twoFingerRef but
+  // computed from the angle of (pointer - letter_center).
+  const shiftRotateRef = useRef<{
+    letterId: number | null;
+    initialPointerAngle: number;
+    initialBodyAngle: number;
+  }>({ letterId: null, initialPointerAngle: 0, initialBodyAngle: 0 });
   // Pencil/eraser stroke tracking. `active` is set on pointerdown for
   // those tools and cleared on pointerup; lastX/lastY remember the
   // previous point so we can draw/erase a continuous line.
@@ -261,10 +302,26 @@ export function CascadeStage({
       keyInputRef.current?.blur();
       document.body.classList.remove("cascade-focused");
     }
+    // Bounding box + rotation handle only make sense in move mode.
+    // Switching away clears selection so the overlay disappears; switching
+    // back leaves the user with no selection (they'll re-tap to select).
+    if (tool !== "move") {
+      setSelectedLetterId(null);
+    }
     return () => {
       document.body.classList.remove("cascade-focused");
     };
   }, [tool]);
+
+  /** Wipe the entire poster — letters + drawing strokes — without saving.
+   * Used by the X (clear) tool-button; no confirmation since the action is
+   * non-destructive (nothing's been committed to the gallery yet). */
+  function handleClearPoster() {
+    clearAll();
+    clearDrawCanvas();
+    setSelectedLetterId(null);
+    setTick((n) => (n + 1) % 1_000_000);
+  }
 
   async function ensureFontFaceLoaded(font: FontEntry) {
     if (runtime.loadedFontFaceIds.has(font.id)) return;
@@ -324,6 +381,7 @@ export function CascadeStage({
       // Wipe stage so the user can start the next poster immediately
       clearAll();
       clearDrawCanvas();
+      setSelectedLetterId(null);
       setSaveStatus("saved");
       setTick((n) => (n + 1) % 1_000_000);
       window.setTimeout(() => setSaveStatus("idle"), 5000);
@@ -505,12 +563,80 @@ export function CascadeStage({
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     const p = pointerToPhysics(e.clientX, e.clientY);
     if (!p) return;
+    // Remember EVERY active pointer's position — required for the
+    // 2-finger gesture detection below.
+    pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
     if (tool === "move") {
+      // Rotation-handle path: when the user lands on the small yellow
+      // handle that orbits the selected letter, branch to rotate mode
+      // instead of translate. The handle is a div with
+      // data-cascade-handle="rotate" + pointer-events:auto; the stage's
+      // delegated pointerdown still fires for it (event bubbling).
+      const target = e.target as HTMLElement | null;
+      if (target?.dataset?.cascadeHandle === "rotate" && selectedLetterId !== null) {
+        e.preventDefault();
+        safeCapture(e);
+        rotateHandleRef.current = { letterId: selectedLetterId };
+        return;
+      }
+      // TWO-FINGER PINCH-ROTATE detection: this is the 2nd pointer
+      // landing while finger #1 is already mid-drag on a letter. Snap
+      // the initial pointer-pair angle + the letter's current body
+      // angle; subsequent pointermoves use the delta. Skip the rest of
+      // the down-handler so the 2nd finger doesn't try to grab its own
+      // letter (or deselect anything).
+      if (
+        pointersRef.current.size === 2 &&
+        dragRef.current.letterId !== null &&
+        !twoFingerRef.current.active
+      ) {
+        const pts = [...pointersRef.current.values()];
+        const initAng = Math.atan2(
+          pts[1].clientY - pts[0].clientY,
+          pts[1].clientX - pts[0].clientX,
+        );
+        const letter = runtime.letters.find(
+          (l) => l.id === dragRef.current.letterId,
+        );
+        if (letter) {
+          twoFingerRef.current = {
+            active: true,
+            letterId: letter.id,
+            initialPointersAngle: initAng,
+            initialBodyAngle: letter.body.angle,
+          };
+        }
+        e.preventDefault();
+        safeCapture(e);
+        return;
+      }
       const hit = letterAt(p.x, p.y);
-      if (!hit) return;
+      if (!hit) {
+        // Tapped empty space → clear selection (overlay disappears).
+        if (selectedLetterId !== null) setSelectedLetterId(null);
+        return;
+      }
       e.preventDefault();
       safeCapture(e);
+      // SHIFT+DRAG rotation (desktop fallback for the 2-finger gesture).
+      // shiftKey is a no-op on touch devices (no shift on a soft kb), so
+      // there's no conflict with the touch path.
+      if (e.shiftKey) {
+        setSelectedLetterId(hit.id);
+        shiftRotateRef.current = {
+          letterId: hit.id,
+          initialPointerAngle: Math.atan2(
+            p.y - hit.body.position.y,
+            p.x - hit.body.position.x,
+          ),
+          initialBodyAngle: hit.body.angle,
+        };
+        return;
+      }
+      // Tapping a letter both selects it (so the overlay appears) and
+      // starts the drag-to-translate interaction.
+      setSelectedLetterId(hit.id);
       // Freeze the letter in place while dragging. Static bodies still
       // collide with dynamic letters.
       Matter.Body.setStatic(hit.body, true);
@@ -542,7 +668,80 @@ export function CascadeStage({
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    // Keep the tracked position fresh for every active pointer. The
+    // 2-finger gesture reads from this on each move.
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    }
     if (tool === "move") {
+      // TWO-FINGER PINCH-ROTATE: highest precedence on move while two
+      // pointers are tracked. Recompute the angle between the two
+      // pointer positions and apply (current - initial) as a delta on
+      // top of the snapshot body angle.
+      if (twoFingerRef.current.active && pointersRef.current.size >= 2) {
+        const pts = [...pointersRef.current.values()];
+        const cur = Math.atan2(
+          pts[1].clientY - pts[0].clientY,
+          pts[1].clientX - pts[0].clientX,
+        );
+        const delta = cur - twoFingerRef.current.initialPointersAngle;
+        const letter = runtime.letters.find(
+          (l) => l.id === twoFingerRef.current.letterId,
+        );
+        if (letter) {
+          Matter.Body.setAngle(
+            letter.body,
+            twoFingerRef.current.initialBodyAngle + delta,
+          );
+          setTick((n) => (n + 1) % 1_000_000);
+        }
+        // Skip translation while 2-finger is active so the letter
+        // doesn't simultaneously fly around — purely a rotation gesture.
+        return;
+      }
+      // SHIFT+DRAG rotation (desktop). Same delta-from-snapshot pattern,
+      // but the snapshot is "angle of pointer relative to letter center"
+      // rather than "angle between two pointers".
+      if (shiftRotateRef.current.letterId !== null) {
+        const p = pointerToPhysics(e.clientX, e.clientY);
+        if (!p) return;
+        const letter = runtime.letters.find(
+          (l) => l.id === shiftRotateRef.current.letterId,
+        );
+        if (!letter) return;
+        const cur = Math.atan2(
+          p.y - letter.body.position.y,
+          p.x - letter.body.position.x,
+        );
+        const delta = cur - shiftRotateRef.current.initialPointerAngle;
+        Matter.Body.setAngle(
+          letter.body,
+          shiftRotateRef.current.initialBodyAngle + delta,
+        );
+        setTick((n) => (n + 1) % 1_000_000);
+        return;
+      }
+      // Rotation-handle drag wins over translation. While the user has
+      // the handle grabbed, we ignore translation logic entirely — set
+      // the body's angle so its local +up direction (the handle's home
+      // position) points at the current pointer location.
+      if (rotateHandleRef.current.letterId !== null) {
+        const p = pointerToPhysics(e.clientX, e.clientY);
+        if (!p) return;
+        const letter = runtime.letters.find(
+          (l) => l.id === rotateHandleRef.current.letterId,
+        );
+        if (!letter) return;
+        // atan2(dx, dy_inverted) returns 0 when pointer is directly
+        // above the letter (matching the handle's home position) and
+        // grows clockwise — same convention as Matter.Body.angle and
+        // CSS rotate(rad).
+        const dx = p.x - letter.body.position.x;
+        const dy = letter.body.position.y - p.y;
+        Matter.Body.setAngle(letter.body, Math.atan2(dx, dy));
+        setTick((n) => (n + 1) % 1_000_000);
+        return;
+      }
       if (dragRef.current.letterId === null) return;
       const p = pointerToPhysics(e.clientX, e.clientY);
       if (!p) return;
@@ -589,7 +788,51 @@ export function CascadeStage({
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
+    // Drop this pointer from the tracked set. Done BEFORE the move-tool
+    // branch so the 2-finger exit logic sees the post-removal count.
+    pointersRef.current.delete(e.pointerId);
     if (tool === "move") {
+      // End shift+drag rotation.
+      if (shiftRotateRef.current.letterId !== null) {
+        shiftRotateRef.current = {
+          letterId: null,
+          initialPointerAngle: 0,
+          initialBodyAngle: 0,
+        };
+        return;
+      }
+      // End 2-finger rotation when we drop below 2 pointers. RE-ANCHOR
+      // the surviving translation drag's offset so the letter doesn't
+      // visually JUMP at the moment the 2nd finger lifts (the 1st finger
+      // may have moved during the gesture — we paused translation, so
+      // its current position differs from its position when grabbed).
+      if (twoFingerRef.current.active && pointersRef.current.size < 2) {
+        twoFingerRef.current = {
+          active: false,
+          letterId: null,
+          initialPointersAngle: 0,
+          initialBodyAngle: 0,
+        };
+        if (dragRef.current.letterId !== null && pointersRef.current.size === 1) {
+          const remaining = [...pointersRef.current.values()][0];
+          const p = pointerToPhysics(remaining.clientX, remaining.clientY);
+          const letter = runtime.letters.find(
+            (l) => l.id === dragRef.current.letterId,
+          );
+          if (p && letter) {
+            dragRef.current.offsetX = letter.body.position.x - p.x;
+            dragRef.current.offsetY = letter.body.position.y - p.y;
+          }
+        }
+        return;
+      }
+      // End rotation-handle drag (if active). Selection stays so the
+      // overlay remains visible after release — same shape as a
+      // typical select-then-rotate UX (Figma/Sketch).
+      if (rotateHandleRef.current.letterId !== null) {
+        rotateHandleRef.current = { letterId: null };
+        return;
+      }
       if (dragRef.current.letterId === null) return;
       // Body stays static — that's the lock. Re-grabbing works because
       // handlePointerDown's hit-test catches static bodies too.
@@ -800,6 +1043,29 @@ export function CascadeStage({
                 />
               </svg>
             </button>
+            {/* Clear-poster action button. Not a tool toggle (doesn't get
+                .active), just an immediate action: drops all letters and
+                wipes drawing strokes. No confirmation — nothing has been
+                committed to the gallery yet, and the user can retype/
+                redraw immediately. */}
+            <button
+              type="button"
+              className="cascade-tool-btn cascade-clear-btn"
+              onClick={handleClearPoster}
+              aria-label="clear poster"
+              title="clear poster (letters + drawings)"
+              disabled={letterCount === 0}
+            >
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M4 4 L12 12 M12 4 L4 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
           </div>
         </>
       )}
@@ -844,6 +1110,92 @@ export function CascadeStage({
               {l.char}
             </span>
           ))}
+          {/* Selection overlay: dashed bounding box + rotation handle.
+              Rendered only in move mode for the currently-selected
+              letter. The box stays in screen pixels (px) because the
+              stage's layout box is fixed-physics-units even on mobile
+              (where transform:scale shrinks the visual but coords stay
+              in the 420×594 space). */}
+          {(() => {
+            if (tool !== "move" || selectedLetterId === null) return null;
+            const sel = runtime.letters.find((l) => l.id === selectedLetterId);
+            if (!sel) return null;
+            const cx = sel.body.position.x;
+            const cy = sel.body.position.y;
+            const ang = sel.body.angle;
+            // Bbox is square circumscribing the letter circle (radius =
+            // size*0.5 + padding). Keep it loose so the dashes don't
+            // visually crowd the glyph edges.
+            const side = sel.size + 8;
+            // Handle sits directly above the letter in its LOCAL frame
+            // (so it rotates with the letter — visual feedback that
+             // rotation works). Distance: half-side + breathing room +
+            // half-handle so the line+circle don't overlap the bbox.
+            const handleDist = side / 2 + 18;
+            const handleR = 8; // px radius
+            return (
+              <>
+                {/* Bounding box: rotates with the letter via the same
+                    transform pattern the letter span uses. */}
+                <div
+                  className="cascade-bbox"
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: `${side}px`,
+                    height: `${side}px`,
+                    transform: `translate3d(${cx}px, ${cy}px, 0) translate(-50%, -50%) rotate(${ang}rad)`,
+                    transformOrigin: "center",
+                    pointerEvents: "none",
+                  }}
+                />
+                {/* Spine line from letter center to handle. Lives in the
+                    same rotating local frame so it always reads as
+                    "letter's up-axis". */}
+                <div
+                  className="cascade-handle-spine"
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: "1px",
+                    height: `${handleDist}px`,
+                    // Rotate first (about local origin), then translate
+                    // up by handleDist so the line spans center→handle.
+                    transform: `translate3d(${cx}px, ${cy}px, 0) rotate(${ang}rad) translate(0, -${handleDist}px)`,
+                    transformOrigin: "top left",
+                    pointerEvents: "none",
+                  }}
+                />
+                {/* The handle itself — pointer-events:auto so it can
+                    receive the pointerdown that bubbles to the stage's
+                    delegated handler. data-cascade-handle lets that
+                    handler distinguish handle-drag from letter-drag. */}
+                <div
+                  className="cascade-rotate-handle"
+                  data-cascade-handle="rotate"
+                  aria-label="rotate letter"
+                  role="button"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: `${handleR * 2}px`,
+                    height: `${handleR * 2}px`,
+                    // Same pattern: rotate then offset along the local
+                    // -y direction (which is "up" in the letter's frame).
+                    transform: `translate3d(${cx}px, ${cy}px, 0) rotate(${ang}rad) translate(-${handleR}px, -${handleDist + handleR}px)`,
+                    transformOrigin: "top left",
+                    pointerEvents: "auto",
+                    touchAction: "none",
+                  }}
+                />
+              </>
+            );
+          })()}
         </div>
       </div>
 

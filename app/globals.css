@@ -1139,6 +1139,43 @@ p {
   text-transform: lowercase;
 }
 
+/* Clear-poster action button. Same shape as the mode toggles but is an
+   action, not a state — disable-able when nothing's on the canvas to
+   suppress accidental taps. No .active state because it doesn't toggle. */
+.cascade-clear-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* --- Selection overlay (bbox + rotation handle) ------------------------ */
+
+/* Yellow dashed border traces the selected letter. Box uses the same
+   transform pattern as .poster-letter so it co-rotates with the glyph. */
+.cascade-bbox {
+  border: 1.5px dashed var(--fg);
+  box-sizing: border-box;
+}
+
+/* Thin spine connecting letter center → handle. Same yellow as the box. */
+.cascade-handle-spine {
+  background: var(--fg);
+}
+
+/* Drag handle: small yellow disc with a dark outline so it stays visible
+   on both a white poster and the surrounding pink page. cursor:grab is
+   the affordance; touch-action:none stops mobile from interpreting a
+   handle-drag as page scroll/zoom. */
+.cascade-rotate-handle {
+  background: var(--fg);
+  border: 1.5px solid #111;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.cascade-rotate-handle:active {
+  cursor: grabbing;
+}
+
 .cascade-save-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
