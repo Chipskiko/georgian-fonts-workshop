@@ -679,7 +679,7 @@ export async function renderDetectionDebug(buffer: Buffer): Promise<{
 
   // Preview at 1200px wide (same as renderDebugOverlay) so the user can
   // compare side by side
-  const PREVIEW_W = 1200;
+  const PREVIEW_W = 720;
   const previewScale = PREVIEW_W / DETECT_W;
   const previewH = Math.round(detectH * previewScale);
   const s = (n: number) => Math.round(n * previewScale);
@@ -747,7 +747,7 @@ export async function renderDebugOverlay(buffer: Buffer): Promise<{
   // pink cell rects sitting exactly on the printed cells.
   const warped = await warpToCanonical(buffer, layout.warp);
 
-  const PREVIEW_W = 1200;
+  const PREVIEW_W = 720;
   const previewScale = PREVIEW_W / warped.width;
   const previewH = Math.round(warped.height * previewScale);
 
@@ -1457,7 +1457,7 @@ export async function renderDebugView(
   //    Uses the same logic as findMarkers including collinearity validation.
   const markers = findMarkers(thresholdedBuf, DETECT_W, detectH);
 
-  const PREVIEW_W = 1200;
+  const PREVIEW_W = 720;
   const baseMeta = {
     threshold,
     blur,
@@ -1830,7 +1830,7 @@ async function renderCandidatesImage(
   sortedCandidates: Component[],
   threshold: number,
 ): Promise<{ base64: string; width: number; height: number }> {
-  const PREVIEW_W = 1200;
+  const PREVIEW_W = 720;
   const previewScale = PREVIEW_W / detectW;
   const previewH = Math.round(detectH * previewScale);
   const s = (n: number) => Math.round(n * previewScale);
