@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { FONTS_LIST_TAG } from "@/lib/fonts";
 import {
   processScan,
   renderDebugOverlay,
@@ -281,11 +282,12 @@ export async function saveFontFromPreview(
   const saved = await saveFont(requestedName, bytes);
   const finalName = saved.filename;
 
-  revalidatePath("/");
-  revalidatePath("/cascade");
-  revalidatePath("/add");
-  revalidatePath("/posterizer");
-  revalidatePath("/make");
+  // Single tag-based invalidation drops the cached font list across
+  // every consumer (layout + every page that calls getFonts). Layout-
+  // level revalidatePath ensures the root layout's tree gets rebuilt
+  // even if a route handler somewhere bypasses the tag system.
+  updateTag(FONTS_LIST_TAG);
+  revalidatePath("/", "layout");
 
   return { ok: true, message: `შენახულია ${finalName}` };
 }

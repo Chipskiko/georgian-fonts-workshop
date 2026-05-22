@@ -1,8 +1,14 @@
 import path from "node:path";
+import { unstable_cache } from "next/cache";
 import type { FontEntry } from "./types";
 import { listFonts } from "./font-storage";
 
 export type { FontEntry };
+
+/** Cache tag for the font list. Server actions that mutate fonts
+ *  (saveFont, deleteFont, saveFontFromPreview) call revalidateTag with
+ *  this string to drop the cache immediately on upload/delete. */
+export const FONTS_LIST_TAG = "fonts-list";
 
 const EXT_TO_FORMAT: Record<string, FontEntry["format"]> = {
   ".ttf": "truetype",
@@ -23,7 +29,10 @@ function toName(filename: string): { name: string; designer?: string } {
   return { name: base.replace(/[-_]+/g, " ") };
 }
 
-export async function getFonts(): Promise<FontEntry[]> {
+/** Inner implementation — runs the Blob list() call. Always uncached
+ *  by itself; the public getFonts wraps it with unstable_cache so
+ *  callers in server components get a cached result. */
+async function _getFonts(): Promise<FontEntry[]> {
   const stored = await listFonts();
   const fonts: FontEntry[] = [];
   for (const s of stored) {
@@ -43,6 +52,17 @@ export async function getFonts(): Promise<FontEntry[]> {
   }
   return fonts.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+// Cache the font list at the function level. Every page that calls
+// getFonts() (layout, /, /add, /cascade) shares the same cached entry —
+// so a single Blob list() per cache window (60s) instead of one per
+// page render. Tag-based invalidation in save/delete actions drops the
+// cache immediately so new uploads appear on the very next request.
+// The TTL is a safety net for any invalidation that doesn't fire.
+export const getFonts = unstable_cache(_getFonts, ["fonts-list"], {
+  tags: [FONTS_LIST_TAG],
+  revalidate: 60,
+});
 
 export function fontFaceCss(fonts: FontEntry[]): string {
   return fonts

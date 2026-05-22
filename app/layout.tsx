@@ -21,12 +21,25 @@ export const metadata: Metadata = {
 // device width and zooming would misalign the A4 stage's tap targets
 // and the iOS Safari keyboard's auto-zoom-on-focus would shift the
 // whole layout.
-// Force layout to re-render on every request so newly uploaded fonts
-// show up in the @font-face <style> block. By default
-// revalidatePath("/") only invalidates the home page — NOT the root
-// layout — so fontFaceCss(fonts) ran with a stale snapshot and any
-// font added since first render rendered in the system fallback.
-export const dynamic = "force-dynamic";
+// `force-dynamic` was previously needed because:
+//   1. revalidatePath('/') only invalidates the home page, NOT the
+//      root layout. So a font upload would correctly invalidate the
+//      page that lists fonts, but the layout's @font-face <style>
+//      stayed stale and the page rendered with the system fallback.
+// We've now removed it because:
+//   1. getFonts is wrapped in unstable_cache and tagged FONTS_LIST_TAG.
+//   2. Every font save/delete server action calls
+//      revalidateTag(FONTS_LIST_TAG) AND revalidatePath('/', 'layout'),
+//      which together drop both the function cache AND the layout's
+//      cache so the next request sees the new fonts.
+// With force-dynamic gone, the layout can be served from Vercel's CDN
+// cache — huge reduction in function invocations during workshop
+// browsing. The 60s TTL on the cached font list is a safety net for
+// any invalidation that doesn't fire.
+//
+// IMPORTANT: if "fonts not appearing after upload" returns, the first
+// thing to check is whether revalidateTag is firing in the save actions
+// (it should — see app/add/actions.ts and app/make/actions.ts).
 
 export const viewport: Viewport = {
   width: "device-width",

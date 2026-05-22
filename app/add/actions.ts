@@ -1,11 +1,12 @@
 "use server";
 
 import path from "node:path";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import {
   saveFont,
   deleteFont as storageDeleteFont,
 } from "@/lib/font-storage";
+import { FONTS_LIST_TAG } from "@/lib/fonts";
 import { passwordsMatch } from "@/lib/auth";
 
 const ALLOWED_EXT = [".ttf", ".otf", ".woff", ".woff2"];
@@ -46,10 +47,12 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
   const saved = await saveFont(requested, buffer);
   const finalName = saved.filename;
 
-  revalidatePath("/");
-  revalidatePath("/cascade");
-  revalidatePath("/add");
-  revalidatePath("/posterizer");
+  // Drop the cached font list so layout + pages see the new upload on
+  // the very next request. revalidatePath('layout') invalidates the
+  // root layout's tree (where getFonts() is called); the tag matches
+  // the unstable_cache wrapper around getFonts().
+  updateTag(FONTS_LIST_TAG);
+  revalidatePath("/", "layout");
 
   return { ok: true, message: `ატვირთულია ${finalName}` };
 }
@@ -78,9 +81,7 @@ export async function deleteFont(filename: string, password: string): Promise<{ 
     return { ok: false, message: err instanceof Error ? err.message : "წაშლა ვერ მოხერხდა" };
   }
 
-  revalidatePath("/");
-  revalidatePath("/cascade");
-  revalidatePath("/add");
-  revalidatePath("/posterizer");
+  updateTag(FONTS_LIST_TAG);
+  revalidatePath("/", "layout");
   return { ok: true, message: `წაშლილია ${safe}` };
 }

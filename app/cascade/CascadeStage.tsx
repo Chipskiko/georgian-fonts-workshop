@@ -199,10 +199,8 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 export function CascadeStage({
   initialFonts,
-  cssFontFaces,
 }: {
   initialFonts: FontEntry[];
-  cssFontFaces: string;
 }) {
   const [, setTick] = useState(0);
   const [bg, setBg] = useState(DEFAULT_BG);
@@ -396,12 +394,38 @@ export function CascadeStage({
         logging: false,
         useCORS: true,
       });
-      const blob: Blob | null = await new Promise((res) =>
-        canvas.toBlob(res, "image/png"),
+      // JPEG instead of PNG: ~10× smaller files for posters that are
+      // mostly flat-color backgrounds + glyphs. Quality 0.92 keeps text
+      // edges crisp; artifacts are invisible at print sizes.
+      const fullBlob: Blob | null = await new Promise((res) =>
+        canvas.toBlob(res, "image/jpeg", 0.92),
       );
-      if (!blob) throw new Error("toBlob failed");
+      if (!fullBlob) throw new Error("toBlob full failed");
+
+      // Gallery thumbnail — 1/3 each dimension = 1/9 the pixels. Loaded
+      // in the grid view so opening /posterizer doesn't pull megabytes
+      // per poster. Lightbox still loads the full version.
+      const THUMB_W = Math.round(SAVE_PX_W / 3);
+      const THUMB_H = Math.round(SAVE_PX_H / 3);
+      const thumbCanvas = document.createElement("canvas");
+      thumbCanvas.width = THUMB_W;
+      thumbCanvas.height = THUMB_H;
+      const tctx = thumbCanvas.getContext("2d");
+      // Best-effort: if thumb generation fails (no 2d context, etc.) we
+      // still upload the full and the gallery falls back to the full URL.
+      let thumbBlob: Blob | null = null;
+      if (tctx) {
+        tctx.imageSmoothingEnabled = true;
+        tctx.imageSmoothingQuality = "high";
+        tctx.drawImage(canvas, 0, 0, THUMB_W, THUMB_H);
+        thumbBlob = await new Promise<Blob | null>((res) =>
+          thumbCanvas.toBlob(res, "image/jpeg", 0.85),
+        );
+      }
+
       const fd = new FormData();
-      fd.append("file", blob, "poster.png");
+      fd.append("file", fullBlob, "poster.jpg");
+      if (thumbBlob) fd.append("thumb", thumbBlob, "poster_thumb.jpg");
       const result = await uploadPoster(fd);
       if (!result.ok) throw new Error(result.message);
       // Wipe stage so the user can start the next poster immediately
@@ -949,7 +973,15 @@ export function CascadeStage({
 
   return (
     <div className="cascade-page" onClick={handlePageClick}>
-      <style dangerouslySetInnerHTML={{ __html: cssFontFaces }} />
+      {/* @font-face declarations live in the root layout's <head> style
+          block (server-rendered via getFonts + fontFaceCss). We used to
+          duplicate that block here too because html2canvas-pro couldn't
+          find fonts loaded only via the FontFace API; with the layout-
+          level <style> present, html2canvas's stylesheet scan picks it
+          up and the duplicate just wastes ~4KB per cascade render.
+          ensureFontFaceLoaded still appends per-font CSS to a separate
+          dynamicStyleRef as the picker changes, which covers fonts
+          uploaded after the page was rendered. */}
 
       <input
         ref={keyInputRef}
