@@ -20,6 +20,12 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
+  /* Lock horizontal scroll across the whole site. Vertical scroll
+     stays available. Combined with the cascade stage's transform-
+     scale + overflow:hidden wrap, this guarantees no element can
+     push the page wider than the viewport. */
+  max-width: 100vw;
+  overflow-x: hidden;
   /* Belt-and-suspenders for the viewport meta: stops iOS Safari's
      double-tap-to-zoom + pinch-zoom on every tap target. (The cascade
      stage overrides this to `none` for its drag-to-pin handler.) */
