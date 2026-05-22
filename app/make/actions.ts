@@ -116,38 +116,78 @@ export type DebugResult =
  * (no candidates? wrong ones picked? markers out of frame?) rather than
  * just a generic error.
  */
+// Maximum size for a fallback PNG (post-base64). React serializes server
+// action responses into the streaming RSC payload — multi-MB strings
+// in there can blow past Next/Vercel response limits and surface as a
+// generic "Server Components render" error in production with no
+// useful detail. Cap at 2MB; if the fallback PNG would be bigger, we
+// drop it and just return the textual message.
+const MAX_FALLBACK_B64_BYTES = 2 * 1024 * 1024;
+
 export async function debugScan(formData: FormData): Promise<DebugResult> {
-  const file = formData.get("scan");
-  if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
-  if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
-
-  let buffer: Buffer;
+  // Outermost try wraps the ENTIRE action body. Any uncaught throw past
+  // this point — OOM in sharp, decode failure, response too large — gets
+  // converted into a structured response so the client sees a real
+  // Georgian error message instead of Next's generic "Server Components
+  // render" wrapper. Also logs to stderr so Vercel function logs capture
+  // the underlying stack trace (the digest hash shown to the user maps
+  // to that log entry).
   try {
-    buffer = Buffer.from(await file.arrayBuffer());
-  } catch {
-    return { ok: false, message: "ფაილის წაკითხვა ვერ მოხერხდა" };
-  }
-
-  try {
-    const overlay = await renderDebugOverlay(buffer);
-    return {
-      ok: true,
-      pngBase64: overlay.pngBase64,
-      width: overlay.width,
-      height: overlay.height,
-      cellCount: overlay.layout.cells.length,
-    };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "დებაგი ვერ შესრულდა";
-    // Try the detection-debug fallback. Render an annotated image showing
-    // every candidate component the detector found, even though the full
-    // pipeline couldn't complete.
-    try {
-      const fallback = await renderDetectionDebug(buffer);
-      return { ok: false, message, fallback };
-    } catch {
-      return { ok: false, message };
+    const file = formData.get("scan");
+    if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
+    if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
+    if (file.size > MAX_BYTES) {
+      return { ok: false, message: `ფაილი ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
     }
+
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(await file.arrayBuffer());
+    } catch (e) {
+      console.error("[debugScan] arrayBuffer failed:", e);
+      return { ok: false, message: "ფაილის წაკითხვა ვერ მოხერხდა" };
+    }
+
+    try {
+      const overlay = await renderDebugOverlay(buffer);
+      return {
+        ok: true,
+        pngBase64: overlay.pngBase64,
+        width: overlay.width,
+        height: overlay.height,
+        cellCount: overlay.layout.cells.length,
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "დებაგი ვერ შესრულდა";
+      console.error("[debugScan] renderDebugOverlay failed:", e);
+      // Try the detection-debug fallback. Render an annotated image
+      // showing every candidate component the detector found, even
+      // though the full pipeline couldn't complete.
+      try {
+        const fallback = await renderDetectionDebug(buffer);
+        // Guard: oversized base64 responses cause Next/Vercel to bounce
+        // with the generic "Server Components render" error. Drop the
+        // image and just send the message in that case.
+        if (fallback.pngBase64.length > MAX_FALLBACK_B64_BYTES) {
+          console.warn(
+            `[debugScan] fallback PNG too large (${fallback.pngBase64.length}b), dropping`,
+          );
+          return { ok: false, message };
+        }
+        return { ok: false, message, fallback };
+      } catch (fbErr) {
+        console.error("[debugScan] renderDetectionDebug failed:", fbErr);
+        return { ok: false, message };
+      }
+    }
+  } catch (top) {
+    // The catch-all. Anything past here means something threw that we
+    // weren't expecting (likely OOM, function timeout, or a sharp
+    // libvips abort). Surface a structured response so the client
+    // doesn't see Next's generic error wrapper.
+    console.error("[debugScan] top-level catch:", top);
+    const msg = top instanceof Error ? top.message : "უცნობი შეცდომა";
+    return { ok: false, message: `დებაგი ჩავარდა: ${msg}` };
   }
 }
 
@@ -188,27 +228,38 @@ export async function tunableDebugScan(
   blur: number,
   traceThreshold: number,
 ): Promise<TunableDebugResult> {
-  if (!fileBase64) return { ok: false, message: "ფაილი არ არის" };
-  let buffer: Buffer;
   try {
-    buffer = Buffer.from(fileBase64, "base64");
-  } catch {
-    return { ok: false, message: "ფაილის გაშიფვრა ვერ მოხერხდა" };
-  }
-  if (buffer.length === 0) return { ok: false, message: "ცარიელი ფაილი" };
-  if (buffer.length > MAX_BYTES) {
-    return { ok: false, message: `ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
-  }
-  try {
-    const debug = await renderDebugView(buffer, {
-      view,
-      threshold,
-      blur,
-      traceThreshold,
-    });
-    return { ok: true, debug };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "დებაგი ვერ შესრულდა" };
+    if (!fileBase64) return { ok: false, message: "ფაილი არ არის" };
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(fileBase64, "base64");
+    } catch (e) {
+      console.error("[tunableDebugScan] base64 decode failed:", e);
+      return { ok: false, message: "ფაილის გაშიფვრა ვერ მოხერხდა" };
+    }
+    if (buffer.length === 0) return { ok: false, message: "ცარიელი ფაილი" };
+    if (buffer.length > MAX_BYTES) {
+      return { ok: false, message: `ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
+    }
+    try {
+      const debug = await renderDebugView(buffer, {
+        view,
+        threshold,
+        blur,
+        traceThreshold,
+      });
+      return { ok: true, debug };
+    } catch (e) {
+      console.error("[tunableDebugScan] renderDebugView failed:", e);
+      return { ok: false, message: e instanceof Error ? e.message : "დებაგი ვერ შესრულდა" };
+    }
+  } catch (top) {
+    // Same outermost wrapper as debugScan — catches OOM / timeout /
+    // anything we didn't anticipate so the client sees a real message
+    // instead of Next's generic "Server Components render" wrapper.
+    console.error("[tunableDebugScan] top-level catch:", top);
+    const msg = top instanceof Error ? top.message : "უცნობი შეცდომა";
+    return { ok: false, message: `დებაგი ჩავარდა: ${msg}` };
   }
 }
 
