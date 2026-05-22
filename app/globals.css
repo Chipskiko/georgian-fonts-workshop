@@ -129,7 +129,7 @@ p {
 
   /* Full-screen overlay menu. Covers the entire viewport when open
      so it's impossible to miss-tap a background control while
-     navigating. The yellow inset border is the visual frame. */
+     navigating. */
   .nav-mobile-panel {
     position: fixed;
     inset: 0;
@@ -140,12 +140,12 @@ p {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 28px;
+    gap: 22px;
     text-align: center;
     font-family: var(--ui-georgian);
     text-transform: lowercase;
-    font-size: 2em;
-    /* Fade + slide from left for a soft transition. */
+    font-size: 1.5em;
+    /* Slide from left for a soft transition. */
     transform: translateX(-100%);
     transition: transform 0.2s ease;
   }
@@ -951,6 +951,14 @@ p {
    spawn coords are unchanged), only the visual is shrunk. The wrap
    reserves just the scaled height so content below sits flush. */
 @media (max-width: 700px) {
+  /* Whole site uses a smaller base size on phones — the 1.3em body
+     looked huge once we lost the desktop's horizontal space. Most UI
+     scales relative to body so this single change shrinks everything
+     proportionally (controls, hints, form labels, etc.). */
+  body {
+    font-size: 1em;
+  }
+
   /* 40px page padding on all sides so the canvas + tools + controls
      have breathing room from the viewport edges. --reserved-h
      accounts for nav + tool palette + controls row + paddings; in
@@ -959,10 +967,10 @@ p {
   .cascade-page {
     padding: 40px;
     gap: 14px;
-    --reserved-h: 260px;
+    --reserved-h: 240px;
   }
   body.cascade-focused .cascade-page {
-    --reserved-h: 210px;
+    --reserved-h: 190px;
   }
 
   .cascade-a4-stage-wrap {
@@ -1032,10 +1040,11 @@ p {
 .cascade-tool-group {
   display: inline-flex;
   align-items: center;
-  margin-left: 8px;
-  padding-left: 12px;
-  border-left: 1px dashed var(--fg);
   gap: 0;
+  /* No dashed separator / left padding anymore — tools used to sit on
+     the same row as the save button so the divider gave them a visual
+     boundary. Tools are now their own row, so the divider just looked
+     like clutter pushing the palette to the right. */
 }
 
 .cascade-tool-btn {

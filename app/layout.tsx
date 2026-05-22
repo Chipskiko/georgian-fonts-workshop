@@ -94,7 +94,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 დაამატე
               </Link>
               <Link className="titleButtons" href="/cascade">
-                პოსტერიზატორი
+                პოსტერი
               </Link>
               <Link className="titleButtons" href="/posterizer">
                 გალერია
@@ -118,7 +118,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </summary>
               <nav className="nav-mobile-panel">
                 <Link href="/add">დაამატე</Link>
-                <Link href="/cascade">პოსტერიზატორი</Link>
+                <Link href="/cascade">პოსტერი</Link>
                 <Link href="/posterizer">გალერია</Link>
                 <Link href="/">შრიფტები</Link>
               </nav>
