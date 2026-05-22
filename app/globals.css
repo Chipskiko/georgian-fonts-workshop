@@ -14,18 +14,22 @@
   --ui-georgian: "Xarax", Times, "Times New Roman", serif;
 }
 
+html {
+  /* `overflow-x: clip` is the modern replacement for `overflow-x: hidden`
+     — it clips without creating a new scroll container, which avoids
+     iOS Safari's `100vw includes scrollbar` quirk that was shifting
+     content rightward (making the right margin look smaller than the
+     left on real iPhones, even though the computed values are
+     symmetric in Chrome devtools mobile). */
+  overflow-x: clip;
+}
+
 html,
 body {
   margin: 0;
   padding: 0;
   background: var(--bg);
   color: var(--fg);
-  /* Lock horizontal scroll across the whole site. Vertical scroll
-     stays available. Combined with the cascade stage's transform-
-     scale + overflow:hidden wrap, this guarantees no element can
-     push the page wider than the viewport. */
-  max-width: 100vw;
-  overflow-x: hidden;
   /* Belt-and-suspenders for the viewport meta: stops iOS Safari's
      double-tap-to-zoom + pinch-zoom on every tap target. (The cascade
      stage overrides this to `none` for its drag-to-pin handler.) */
@@ -534,10 +538,14 @@ p {
    min-content size can push it past its grid column on small screens
    (which was making fields look "cut off"). */
 @media (max-width: 600px) {
+  /* max() with safe-area-inset means the padding will be 40px in the
+     common case, but bump higher if iOS reports any inset (rounded
+     screen corners, Dynamic Island in landscape, etc). Stops content
+     from drifting under the notch on iPhones. */
   .add-page,
   .gallery {
-    padding-left: 40px;
-    padding-right: 40px;
+    padding-left: max(40px, env(safe-area-inset-left, 40px));
+    padding-right: max(40px, env(safe-area-inset-right, 40px));
   }
   .add-row {
     grid-template-columns: 1fr;

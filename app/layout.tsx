@@ -27,6 +27,11 @@ export const viewport: Viewport = {
   maximumScale: 1,
   minimumScale: 1,
   userScalable: false,
+  // viewportFit: cover lets the page extend under iOS safe areas
+  // (notch / Dynamic Island corners), and CSS env(safe-area-inset-*)
+  // controls padding from there. Without this, iOS Safari adds
+  // implicit insets that show up as asymmetric content positioning.
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
