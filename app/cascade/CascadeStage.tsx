@@ -34,7 +34,19 @@ const SAVE_PX_H = Math.round((A4_MM_H / 25.4) * DPI); // 1754
 const LETTER_SIZE = 56;
 const SPAWN_TOP_Y = 12;
 const CEILING_Y = -4;
-const POLL_INTERVAL_MS = 3000;
+// Cascade polls /api/fonts to pick up newly-uploaded fonts so the picker
+// stays current without a reload. Was 3000 — but every poll hits a
+// Vercel function (cache:'no-store' bypasses HTTP cache). At 3s, one
+// open cascade tab = 1200 function invocations/hour. The Vercel logs
+// (2026-05-22) showed this was the dominant invocation source by far —
+// dwarfing every other route combined.
+//
+// 30s matches the gallery's poll cadence. Server-side getFonts() is
+// already wrapped in unstable_cache + tag-invalidated on upload, so
+// freshness is preserved on navigation (going /add → /cascade always
+// server-renders with the latest list). The 30s window only delays
+// updates that happen while a user is ALREADY on cascade.
+const POLL_INTERVAL_MS = 30_000;
 
 // Drawing-tool constants. The draw canvas runs at print resolution so
 // strokes stay crisp in the saved PNG (the snapshot scales the canvas
