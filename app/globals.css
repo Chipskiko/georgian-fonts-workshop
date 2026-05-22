@@ -15,13 +15,11 @@
 }
 
 html {
-  /* `overflow-x: clip` is the modern replacement for `overflow-x: hidden`
-     — it clips without creating a new scroll container, which avoids
-     iOS Safari's `100vw includes scrollbar` quirk that was shifting
-     content rightward (making the right margin look smaller than the
-     left on real iPhones, even though the computed values are
-     symmetric in Chrome devtools mobile). */
-  overflow-x: clip;
+  /* overflow-x: hidden on html only (not body) avoids the iOS Safari
+     `100vw includes scrollbar` quirk while still preventing the
+     horizontal scroll that `overflow-x: clip` allowed to leak. */
+  width: 100%;
+  overflow-x: hidden;
 }
 
 html,
