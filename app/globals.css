@@ -14,18 +14,14 @@
   --ui-georgian: "Xarax", Times, "Times New Roman", serif;
 }
 
-html {
-  /* overflow-x: hidden on html only (not body) avoids the iOS Safari
-     `100vw includes scrollbar` quirk while still preventing the
-     horizontal scroll that `overflow-x: clip` allowed to leak. */
-  width: 100%;
-  overflow-x: hidden;
-}
-
 html,
 body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  /* overflow-x: hidden on BOTH html and body — the standard mobile-
+     web recipe for hard-locking horizontal scroll on iOS Safari. */
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--fg);
   /* Belt-and-suspenders for the viewport meta: stops iOS Safari's
@@ -292,6 +288,10 @@ p {
 .add-page {
   padding: 30px 20px 60px;
   max-width: 720px;
+  /* Auto margins center the constrained-width form on desktop viewports
+     wider than 720px. On mobile the page is full-width so margins
+     collapse to 0 and have no effect. */
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
