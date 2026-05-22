@@ -524,14 +524,18 @@ p {
   font-size: 1em;
 }
 
-/* On phones the 130px label column squeezes the input to ~190px and
-   long file names get clipped — stack vertically instead. Also bump
-   the page horizontal padding so left/right margins are symmetric and
-   match the cascade page's 40px breathing room, and clamp input
-   min-width so form controls can't push past their grid cell. */
+/* On phones unify ALL top-level page containers to the same 40px
+   horizontal padding (matches the cascade page's mobile margin), so
+   every box / field / form ends at exactly the same x-position on
+   both edges. Inputs get min-width: 0 + width: 100% so the grid cell
+   actually constrains them — without that, an input's intrinsic
+   min-content size can push it past its grid column on small screens
+   (which was making fields look "cut off"). */
 @media (max-width: 600px) {
-  .add-page {
-    padding: 24px 24px 40px;
+  .add-page,
+  .gallery {
+    padding-left: 40px;
+    padding-right: 40px;
   }
   .add-row {
     grid-template-columns: 1fr;
@@ -539,7 +543,8 @@ p {
     gap: 4px;
   }
   .add-row input[type="text"],
-  .add-row input[type="password"] {
+  .add-row input[type="password"],
+  .admin-gate input[type="password"] {
     min-width: 0;
     width: 100%;
   }
