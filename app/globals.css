@@ -1053,13 +1053,16 @@ p {
     font-size: 1em;
   }
 
-  /* 40px page padding on all sides so the canvas + tools + controls
-     have breathing room from the viewport edges. --reserved-h
-     accounts for nav + tool palette + controls row + paddings; in
-     focus mode the nav is hidden so reserved shrinks and the canvas
-     grows. */
+  /* Mobile cascade page padding. Sides + bottom = 40px (viewport-edge
+     breathing room). TOP = the same 14px as the flex gap, so the gap
+     between the page's yellow top border and the tools row visually
+     matches the gap between the tools row and the canvas — content
+     reads as one tightly-spaced column instead of "floating" with
+     a large empty top. --reserved-h accounts for nav + tool palette
+     + controls row + paddings; in focus mode the nav is hidden so
+     reserved shrinks and the canvas grows. */
   .cascade-page {
-    padding: 40px;
+    padding: 14px 40px 40px;
     gap: 14px;
     --reserved-h: 240px;
   }
