@@ -50,6 +50,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           crossOrigin="anonymous"
         />
         <style dangerouslySetInnerHTML={{ __html: css }} />
+        {/* iOS Safari ignores user-scalable=no in browser mode (Apple's
+            accessibility decision since iOS 10) so pinch-zoom can still
+            fire. Block it at the event level — pinch fires gesture*
+            events which we preventDefault. No effect on PWA mode (zoom
+            is already off there) or on Android (no gesture* events). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              document.addEventListener('gesturestart', e => e.preventDefault());
+              document.addEventListener('gesturechange', e => e.preventDefault());
+              document.addEventListener('gestureend', e => e.preventDefault());
+            `,
+          }}
+        />
       </head>
       <body>
         <div id="navigation">
