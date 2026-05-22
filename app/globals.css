@@ -52,7 +52,10 @@ p {
 #info {
   position: relative;
   width: 100%;
-  min-width: 350px;
+  /* No min-width: leftover desktop-era constraint that forced #info to
+     350px even on a 320-wide viewport (iPhone SE / mini), pushing the
+     box 30px past the right edge where overflow-x: hidden then clipped
+     it — read by the eye as "right padding smaller than left". */
   margin: 20px 0;
   padding-top: 5px;
   font-family: var(--ui-georgian);
@@ -166,7 +169,8 @@ p {
 
 #contents {
   width: 100%;
-  min-width: 350px;
+  /* Same min-width removal as #info — both used to force-overflow on
+     320px viewports. */
 }
 
 .collectionContainers {
