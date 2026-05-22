@@ -270,6 +270,31 @@ p {
   text-decoration: underline;
 }
 
+/* "Save / download" button on a font row's expanded panel. Same yellow-
+   filled affordance as the cascade save and preview-actions buttons —
+   ensures one consistent visual vocabulary for primary actions across
+   the whole site. */
+.font-download-btn {
+  display: inline-block;
+  font-family: var(--ui-georgian);
+  font-size: 1em;
+  text-transform: lowercase;
+  text-decoration: none;
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  padding: 6px 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.font-download-btn:hover {
+  /* Invert on hover to match the .admin-delete pattern (mirror of the
+     resting state). */
+  background: var(--bg);
+  color: var(--fg);
+}
+
 .empty-msg {
   border-top: solid var(--fg);
   padding: 20px;

@@ -3,8 +3,6 @@
 import { useState } from "react";
 import type { FontEntry } from "@/lib/types";
 
-const GEORGIAN_ALPHABET = "ა ბ გ დ ე ვ ზ თ ი კ ლ მ ნ ო პ ჟ რ ს ტ უ ფ ქ ღ ყ შ ჩ ც ძ წ ჭ ხ ჯ ჰ".split(" ");
-
 // Unicode ranges for Georgian scripts: Mkhedruli (U+10A0–U+10FF),
 // Khutsuri (U+2D00–U+2D2F), Mtavruli (U+1C90–U+1CBF). If a font name
 // contains any of these, render it with the Georgian UI font so it
@@ -40,6 +38,9 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
 
       {open ? (
         <div className="specimen">
+          {/* Trimmed expanded panel: just name + author + download.
+              The per-letter specimen grid was removed — it duplicated
+              the alphabet preview already shown in the row header. */}
           <div className="specimen-meta">
             <span className="meta-text specimen-name">
               <strong style={nameStyle}>{font.name}</strong>
@@ -50,21 +51,12 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
                 </em>
               ) : null}
             </span>
-            <a className="meta-text meta-download" href={font.file} download>
-              ↓ ჩამოტვირთე
+            {/* Restyled as a yellow button in the site's Georgian UI
+                font, matching the action buttons elsewhere on the site
+                (preview-actions, save buttons, etc). */}
+            <a className="font-download-btn" href={font.file} download>
+              ჩამოტვირთე
             </a>
-          </div>
-
-          <div className="specimen-grid">
-            {GEORGIAN_ALPHABET.map((ch) => (
-              <span
-                key={ch}
-                className="specimen-cell"
-                style={{ fontFamily: `"${font.id}"` }}
-              >
-                {ch}
-              </span>
-            ))}
           </div>
         </div>
       ) : null}

@@ -48,6 +48,12 @@ type Tool = "move" | "pencil" | "eraser" | "type";
 const DEFAULT_BG = "#ffffff";
 const DEFAULT_FG = "#000000";
 
+// Sentinel value used by the font-picker <select> to mean "pick a random
+// font for EACH letter spawned". Not a real font id (font ids derive from
+// filenames). Stored in currentFontId state so the dropdown's selected
+// value reflects "random mode is active".
+const RANDOM_FONT_ID = "__random__";
+
 type Letter = {
   id: number;
   body: Matter.Body;
@@ -201,8 +207,13 @@ export function CascadeStage({
   const [, setTick] = useState(0);
   const [bg, setBg] = useState(DEFAULT_BG);
   const [fg, setFg] = useState(DEFAULT_FG);
+  // Default to the random sentinel so first-time users land in a mode
+  // where each tapped letter picks a different font — closer to the
+  // "type playground" feel of the workshop than picking one specific font.
+  // If there are no fonts at all, the picker isn't rendered (noFontsYet
+  // empty-state path), so this default never reaches the UI in that case.
   const [currentFontId, setCurrentFontId] = useState<string | null>(
-    initialFonts[0]?.id ?? null,
+    initialFonts.length > 0 ? RANDOM_FONT_ID : null,
   );
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   // Current pointer tool: move (drag/resize letters), pencil (draw lines),
@@ -285,6 +296,21 @@ export function CascadeStage({
   }, [bg]);
   useEffect(() => {
     fgRef.current = fg;
+    // Recolor existing pencil strokes on the draw canvas to match the
+    // new fg. globalCompositeOperation = "source-in" replaces every
+    // non-transparent pixel's color while preserving alpha — so strokes
+    // change color in place, eraser cutouts (transparent) stay
+    // transparent. New strokes after this point already use fgRef.current,
+    // so behavior is consistent.
+    const c = drawCanvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-in";
+    ctx.fillStyle = fg;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.restore();
   }, [fg]);
   // Switching to the "type" tool opens the soft keyboard (focus the
   // hidden input); switching away blurs to dismiss the keyboard so it
@@ -406,7 +432,15 @@ export function CascadeStage({
       ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
     }
     if (!ALPHABET_SET.has(ch)) return;
-    const fontId = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
+    // Resolve the font for this specific letter. In random mode each
+    // keystroke picks an independent font, so a typed string spans many
+    // typefaces. Otherwise honor the picker's choice.
+    let fontId: string | null = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
+    if (fontId === RANDOM_FONT_ID) {
+      const fonts = allFontsRef.current;
+      if (fonts.length === 0) return;
+      fontId = fonts[Math.floor(Math.random() * fonts.length)].id;
+    }
     if (!fontId) return;
     spawnLetter(ch, fontId);
     setTick((n) => (n + 1) % 1_000_000);
@@ -1228,6 +1262,9 @@ export function CascadeStage({
               value={currentFontId ?? ""}
               onChange={(e) => setCurrentFontId(e.target.value)}
             >
+              {/* First option = random mode. Sentinel value matched in
+                  handleKeyDown to pick a random font per keystroke. */}
+              <option value={RANDOM_FONT_ID}>შემთხვევითი</option>
               {allFonts.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}

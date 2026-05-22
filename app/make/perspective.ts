@@ -373,19 +373,66 @@ async function warpToCanonical(bitmap: ImageBitmap, markers: MarkerSet): Promise
     outCanvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("blob conversion failed"))),
       "image/jpeg",
-      0.92,
+      // 0.98 instead of 0.92 — JPEG's 8×8 blocks blur high-freq content
+      // (thin outline strokes) into adjacent low-freq areas (a hollow
+      // glyph's interior), which made phone-uploaded hollow letters fill
+      // in solid downstream. ~25% larger files, much less compression
+      // bleed.
+      0.98,
     );
   });
 }
 
 export async function straightenScan(file: File): Promise<Blob> {
+  let bitmap: ImageBitmap | null = null;
   try {
     await ensureOpenCv();
-    const bitmap = await loadImageBitmap(file);
+    bitmap = await loadImageBitmap(file);
     const markers = detectMarkers(bitmap);
-    if (!markers) return file; // fallback — server pipeline will try its own detection
-    return await warpToCanonical(bitmap, markers);
+    if (markers) {
+      return await warpToCanonical(bitmap, markers);
+    }
+    // Marker detection failed — drop through to the compression fallback
+    // so we don't upload a 5MB iPhone photo unchanged. The server still
+    // gets a chance to detect markers on the resized image (its own
+    // pipeline runs at ~1500px internally anyway).
   } catch {
-    return file;
+    // Same: any failure (OpenCV load, bitmap decode, warp) falls through
+    // to "send a compressed version of whatever we got".
   }
+  if (bitmap) {
+    try {
+      return await downscaleToJpeg(bitmap, 2000, 0.9);
+    } catch {
+      // Best-effort — fall through and return the raw file.
+    }
+  }
+  return file;
+}
+
+/** Last-resort uploader compressor for the failed-detection path. Limits
+ *  the LONGER side to maxDim so we never push more than ~maxDim² pixels
+ *  to the server (iPhone photos are 4032×3024 → 12 MP → ~5 MB JPEG; at
+ *  2000px the same image lands around 600 KB). */
+async function downscaleToJpeg(
+  bitmap: ImageBitmap,
+  maxDim: number,
+  quality: number,
+): Promise<Blob> {
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+      "image/jpeg",
+      quality,
+    ),
+  );
 }
