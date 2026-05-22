@@ -22,6 +22,17 @@ export type StoredFont = {
 };
 
 const ALLOWED_EXT = new Set([".ttf", ".otf", ".woff", ".woff2"]);
+// Per-extension MIME for Blob uploads. Browsers' nosniff + cross-origin
+// font loading enforces strict Content-Type/format-hint matching, so the
+// MIME MUST match the actual file format — a previous hardcoded "font/ttf"
+// for every upload made .otf/.woff/.woff2 fonts silently fail to render
+// (downloads still worked because OS uses magic bytes, not Content-Type).
+const EXT_TO_MIME: Record<string, string> = {
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
 const FONT_DIR_FS = path.join(process.cwd(), "public", "fonts");
 const BLOB_PREFIX = "fonts/";
 
@@ -126,10 +137,12 @@ async function listBlob(): Promise<StoredFont[]> {
 async function saveBlob(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
   const { put } = await import("@vercel/blob");
   const unique = withRandomSuffix(filename);
+  const ext = path.extname(unique).toLowerCase();
+  const contentType = EXT_TO_MIME[ext] ?? "application/octet-stream";
   const blob = await put(`${BLOB_PREFIX}${unique}`, Buffer.from(bytes), {
     access: "public",
     addRandomSuffix: false,
-    contentType: "font/ttf",
+    contentType,
   });
   return {
     filename: unique,

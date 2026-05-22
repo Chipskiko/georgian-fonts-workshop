@@ -77,7 +77,11 @@ export async function previewFontFromScan(formData: FormData): Promise<PreviewRe
     return { ok: false, message: e instanceof Error ? `შრიფტის შექმნა ვერ მოხერხდა: ${e.message}` : "შრიფტის შექმნა ვერ მოხერხდა" };
   }
 
-  const requested = cleanDesigner ? `${cleanName}__${cleanDesigner}.ttf` : `${cleanName}.ttf`;
+  // .otf — opentype.js produces CFF-outline fonts (magic "OTTO"), which is
+  // the OpenType format. Saving them as .ttf was a 3-way lie (filename,
+  // CSS format hint, Content-Type all said TTF while bytes were OTF), and
+  // browsers' nosniff + cross-origin font loading rejected the mismatch.
+  const requested = cleanDesigner ? `${cleanName}__${cleanDesigner}.otf` : `${cleanName}.otf`;
   const ttfBase64 = Buffer.from(ttf).toString("base64");
 
   return {
@@ -262,7 +266,7 @@ export async function saveFontFromPreview(
   requestedName: string,
 ): Promise<{ ok: boolean; message: string }> {
   if (!ttfBase64 || !requestedName) return { ok: false, message: "მონაცემები აკლია" };
-  if (!requestedName.endsWith(".ttf")) return { ok: false, message: "არასწორი სახელი" };
+  if (!requestedName.endsWith(".otf")) return { ok: false, message: "არასწორი სახელი" };
 
   let bytes: Buffer;
   try {

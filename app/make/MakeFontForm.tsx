@@ -89,12 +89,17 @@ export function MakeFontForm() {
     }
     const familyId = "preview-" + preview.requestedName.replace(/[^a-zA-Z0-9_-]/g, "_");
     const bytes = Uint8Array.from(atob(preview.ttfBase64), (c) => c.charCodeAt(0));
-    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: "font/ttf" }));
+    // opentype.js produces CFF-outline fonts (magic "OTTO" = OpenType, not
+     // TrueType), so the Blob's MIME and the @font-face format hint must be
+     // "opentype" / font/otf. Same-origin blob URLs are lenient about
+     // mismatches, but production Vercel Blob is cross-origin + nosniff and
+     // strictly rejects format mismatches → font silently falls back.
+    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: "font/otf" }));
     if (!styleRef.current) {
       styleRef.current = document.createElement("style");
       document.head.appendChild(styleRef.current);
     }
-    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${blobUrl}) format("truetype");font-display:swap;}`;
+    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${blobUrl}) format("opentype");font-display:swap;}`;
     return () => {
       URL.revokeObjectURL(blobUrl);
       if (styleRef.current) {
