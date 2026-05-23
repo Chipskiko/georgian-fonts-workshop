@@ -1292,6 +1292,38 @@ p {
   cursor: wait;
 }
 
+/* Home-page font refresh button. Same shape as gallery-refresh-btn but
+   in a header row above the font rows. Used as a fallback when fonts
+   don't render correctly on a participant's device (cache misses,
+   stale @font-face from a prior session, etc). */
+.fonts-refresh-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 0;
+}
+
+.fonts-refresh-btn {
+  font-family: var(--ui-georgian);
+  font-size: 1em;
+  text-transform: lowercase;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--fg);
+  padding: 4px 12px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.fonts-refresh-btn:hover:not(:disabled) {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.fonts-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .gallery-empty {
   font-family: var(--ui-georgian);
   text-transform: lowercase;
