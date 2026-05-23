@@ -373,41 +373,60 @@ async function warpToCanonical(bitmap: ImageBitmap, markers: MarkerSet): Promise
     outCanvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("blob conversion failed"))),
       "image/jpeg",
-      // 0.98 instead of 0.92 — JPEG's 8×8 blocks blur high-freq content
-      // (thin outline strokes) into adjacent low-freq areas (a hollow
-      // glyph's interior), which made phone-uploaded hollow letters fill
-      // in solid downstream. ~25% larger files, much less compression
-      // bleed.
-      0.98,
+      // Quality 1.0 (was 0.98): the warp output is the input to the
+      // server's binarization pipeline, where any JPEG bleed becomes
+      // an ink misclassification. iPhone Safari's canvas+toBlob
+      // produces noticeably more midtone artifacts than desktop
+      // Chrome's at the same nominal quality — pegging the value
+      // forces both to use their respective "best" quality and
+      // narrows the gap. Tiny file-size hit (~5%).
+      1.0,
     );
   });
 }
 
-export async function straightenScan(file: File): Promise<Blob> {
+export type StraightenResult = {
+  blob: Blob;
+  /** Which code path produced this blob. Surface in UI so a user can
+   *  quickly tell whether they got the high-quality warped image
+   *  ("warp") or a more lossy fallback ("fallback" or "passthrough")
+   *  — useful for diagnosing the iPhone-fills-in-shapes bug where
+   *  the same scan succeeds on desktop but degrades on phone. */
+  path: "warp" | "fallback" | "passthrough";
+};
+
+export async function straightenScan(file: File): Promise<StraightenResult> {
   let bitmap: ImageBitmap | null = null;
   try {
     await ensureOpenCv();
     bitmap = await loadImageBitmap(file);
     const markers = detectMarkers(bitmap);
     if (markers) {
-      return await warpToCanonical(bitmap, markers);
+      console.info("[straightenScan] warp OK");
+      const blob = await warpToCanonical(bitmap, markers);
+      return { blob, path: "warp" };
     }
-    // Marker detection failed — drop through to the compression fallback
-    // so we don't upload a 5MB iPhone photo unchanged. The server still
-    // gets a chance to detect markers on the resized image (its own
-    // pipeline runs at ~1500px internally anyway).
-  } catch {
-    // Same: any failure (OpenCV load, bitmap decode, warp) falls through
-    // to "send a compressed version of whatever we got".
+    console.info("[straightenScan] marker detection failed, using fallback");
+  } catch (e) {
+    console.info("[straightenScan] warp threw, using fallback:", e);
   }
   if (bitmap) {
     try {
-      return await downscaleToJpeg(bitmap, 2000, 0.9);
+      // Quality 0.95 (was 0.9): iPhone Safari's canvas+toBlob is more
+      // aggressive at lower quality ranges than desktop Chrome's —
+      // outline strokes bleed into hollow interiors and the server's
+      // adaptive threshold misclassifies the bled-in pixels as ink,
+      // filling the hollows. 0.95 keeps the file size reasonable
+      // (~1 MB at 2000-wide grayscale) and cuts the artifact bleed
+      // enough that the server pipeline reads the same as a desktop
+      // upload of the same scan.
+      const blob = await downscaleToJpeg(bitmap, 2000, 0.95);
+      return { blob, path: "fallback" };
     } catch {
       // Best-effort — fall through and return the raw file.
     }
   }
-  return file;
+  return { blob: file, path: "passthrough" };
 }
 
 /** Last-resort uploader compressor for the failed-detection path. Limits

@@ -64,6 +64,11 @@ export function MakeFontForm() {
   const [debugFallback, setDebugFallback] = useState<
     null | { pngBase64: string; width: number; height: number; candidateCount: number; thresholdUsed: number }
   >(null);
+  // Which path the client-side straightenScan took on the last upload.
+  // Shown as a tiny status line — "warp" is the desirable case; "fallback"
+  // means lower-quality JPEG was sent to the server (more likely to
+  // produce hollow-fills-in-shapes artifacts on phone uploads).
+  const [scanPath, setScanPath] = useState<"warp" | "fallback" | "passthrough" | null>(null);
   // Tuner state. `tunerFileB64` is the uploaded scan cached client-side so
   // we can re-call the server without re-uploading on every slider move.
   const [tunerFileB64, setTunerFileB64] = useState<string | null>(null);
@@ -165,9 +170,16 @@ export function MakeFontForm() {
       if (original instanceof File && original.size > 0) {
         setStage("straightening");
         const corrected = await straightenScan(original);
+        // Surface the path the client took so we can diagnose "phone
+        // upload fills hollows but desktop doesn't" — "warp" = best
+        // case (perspective-corrected, q1.0 JPEG), "fallback" =
+        // markers didn't detect (lower-quality compressed input ≡
+        // more JPEG bleed risk), "passthrough" = couldn't even
+        // re-encode so the server gets the original photo bytes.
+        setScanPath(corrected.path);
         fd.set(
           "scan",
-          new File([corrected], original.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }),
+          new File([corrected.blob], original.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }),
         );
       }
       setStage("tracing");
@@ -265,10 +277,11 @@ export function MakeFontForm() {
       // Run the SAME jscanify perspective correction the real flow uses,
       // so the debug image matches what processScan would see.
       const corrected = await straightenScan(original);
+      setScanPath(corrected.path);
       const debugFd = new FormData();
       debugFd.set(
         "scan",
-        new File([corrected], original.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }),
+        new File([corrected.blob], original.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }),
       );
       const r = await debugScan(debugFd);
       if (!r.ok) {
@@ -371,6 +384,16 @@ export function MakeFontForm() {
           </div>
           {errorMsg ? <p className="add-msg err">{errorMsg}</p> : null}
           {okMsg ? <p className="add-msg ok">{okMsg}</p> : null}
+          {scanPath && adminUnlocked ? (
+            <p className="debug-caption" style={{ marginTop: 4 }}>
+              scan path: <strong>{scanPath}</strong>
+              {scanPath === "fallback"
+                ? " (client warp failed — server got a lower-quality JPEG. likely cause of hollow-shape fills on phone uploads.)"
+                : scanPath === "passthrough"
+                ? " (couldn't even re-encode — server got the original photo bytes.)"
+                : " (best case — perspective-corrected JPEG q1.0 uploaded.)"}
+            </p>
+          ) : null}
           {debug ? (
             <div className="debug-preview">
               <p className="debug-caption">
