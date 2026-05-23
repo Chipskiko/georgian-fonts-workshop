@@ -16,7 +16,7 @@ import {
 
 // URL the QR encodes — participants scanning the QR on a filled-in
 // template land straight on the upload page.
-export const TEMPLATE_QR_URL = "https://georgian-fonts-workshop.vercel.app/add";
+export const TEMPLATE_QR_URL = "https://xarafontinator.vercel.app/add";
 // Index of the cell that hosts the QR (first cell after the alphabet ends).
 // 33 corresponds to row 5, col 3 in the 6×6 grid — the first empty slot.
 export const QR_CELL_INDEX = 33;

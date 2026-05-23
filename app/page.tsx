@@ -1,6 +1,5 @@
 import { getFonts, GEORGIAN_ALPHABET } from "@/lib/fonts";
 import { FontRow } from "./FontRow";
-import { RefreshFontsButton } from "./RefreshFontsButton";
 
 export default async function BrowsePage() {
   const fonts = await getFonts();
@@ -19,10 +18,6 @@ export default async function BrowsePage() {
 
   return (
     <div id="contents">
-      {/* Refresh button — fallback when fonts don't render correctly on
-          a participant's device. Forces re-fetch of layout's <style>
-          block + every @font-face binary. */}
-      <RefreshFontsButton />
       {fonts.map((f) => (
         <FontRow key={f.id} font={f} alphabet={GEORGIAN_ALPHABET.join(" ")} />
       ))}
