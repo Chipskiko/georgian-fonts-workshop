@@ -10,6 +10,52 @@ import { useAdmin } from "../add/useAdmin";
 // manual refresh button covers the "I want to see new posters NOW" case.
 const POLL_INTERVAL_MS = 30_000;
 
+/** Fetch the original color poster, render it through a grayscale-
+ *  conversion canvas, and trigger a download. Doesn't hit the server —
+ *  saves bandwidth + Vercel function invocations. Falls back to opening
+ *  the color poster in a new tab if canvas conversion fails (CORS, etc).
+ */
+async function downloadBnw(url: string, id: string): Promise<void> {
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+    const c = document.createElement("canvas");
+    c.width = bitmap.width;
+    c.height = bitmap.height;
+    const ctx = c.getContext("2d");
+    if (!ctx) throw new Error("no 2d ctx");
+    // Grayscale conversion: luminance-weighted (Rec. 709) so the
+    // perceived brightness matches what the eye sees, instead of a
+    // flat 1/3-1/3-1/3 average which crushes warm colors.
+    ctx.drawImage(bitmap, 0, 0);
+    const imgData = ctx.getImageData(0, 0, c.width, c.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+      d[i] = y; d[i + 1] = y; d[i + 2] = y;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    const outBlob: Blob | null = await new Promise((res) =>
+      c.toBlob(res, "image/jpeg", 0.92),
+    );
+    if (!outBlob) throw new Error("toBlob failed");
+    const downloadUrl = URL.createObjectURL(outBlob);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    // Insert "_bnw" before the extension so the file is obviously paired
+    // with the color version when both are saved into the same folder.
+    a.download = id.replace(/(\.[^.]+)$/, "_bnw$1");
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  } catch (err) {
+    console.warn("[downloadBnw] failed, opening color version instead:", err);
+    window.open(url, "_blank");
+  }
+}
+
 export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) {
   const [posters, setPosters] = useState<StoredPoster[]>(initialPosters);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
@@ -133,6 +179,14 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
                 <a href={p.url} download className="gallery-download">
                   ჩამოტვირთე
                 </a>
+                <button
+                  type="button"
+                  className="gallery-download gallery-bnw"
+                  onClick={() => void downloadBnw(p.url, p.id)}
+                  title="ჩამოტვირთე შავ-თეთრად"
+                >
+                  ↓ შ/თ
+                </button>
                 {unlocked ? (
                   pendingDelete === p.id ? (
                     <span className="gallery-confirm-row">

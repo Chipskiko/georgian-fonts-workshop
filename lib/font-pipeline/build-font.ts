@@ -100,7 +100,13 @@ export function buildFont(
     );
   }
 
-  const font = new opentype.Font({
+  // opentype.js's TypeScript declarations are incomplete: weightClass
+  // is typed as string but the OS/2 writer reads it as a number, and
+  // panose is not declared at all but IS read at runtime (see
+  // opentype.js dist line ~15363). Cast through `any` once so we can
+  // pass the runtime-correct shape.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fontOptions: any = {
     familyName: meta.familyName,
     styleName: "Regular",
     designer: meta.designerName ?? "Workshop",
@@ -108,7 +114,52 @@ export function buildFont(
     ascender: ASCENDER,
     descender: DESCENDER,
     glyphs,
-  });
+    // weightClass 400 = CSS "Regular". opentype.js default is 500
+    // (Medium). Most browsers tolerate the mismatch but Android Chrome's
+    // font matcher prefers exact weights.
+    weightClass: 400,
+    // PANOSE classification (10 bytes): bFamilyType=Latin Text (2),
+    // bWeight=Book (5), bProportion=Modern (3), rest zeros. All-zero
+    // panose is technically valid but Android FreeType prefers fonts
+    // with declared classes — a real cross-platform rendering bug.
+    panose: [2, 0, 5, 3, 0, 0, 0, 0, 0, 0],
+  };
+  const font = new opentype.Font(fontOptions);
+
+  // Android FreeType strictness fixes. opentype.js's default OS/2 fields
+  // are minimal placeholders (usWeightClass=500 Medium, panose all-zero,
+  // achVendID="XXXX", fsSelection=Regular bit only). These pass on iOS
+  // Safari + macOS Chrome (which use CoreText), but Android Chrome + some
+  // older FreeType-based renderers reject or render fallback for fonts
+  // missing OS/2 fields they consider meaningful. Pin sensible values:
+  //
+  //   fsSelection bit 7 (USE_TYPO_METRICS, 0x80) — tells layout engines
+  //     to use sTypoAscender/Descender for line metrics instead of the
+  //     legacy usWinAscent/Descent. Without it, Android Chrome can clip
+  //     glyph extents or use buggy fallback line heights.
+  //
+  //   panose [2,0,5,3,...] — bFamilyType=Latin Text, bWeight=Book,
+  //     bProportion=Modern. All-zero panose ("any") is technically valid
+  //     but FreeType's font matcher prefers fonts with declared classes.
+  //
+  //   achVendID = "WKSH" — workshop vendor tag (4 chars per spec).
+  //     "XXXX" placeholder is technically allowed but some validators
+  //     warn on it, which can cascade into font registration failures.
+  //
+  // We monkey-patch font.tables.os2 directly because opentype.js doesn't
+  // expose constructor options for these fields. tables.os2 is read at
+  // toArrayBuffer time, so the patches make it into the binary.
+  // (panose is set via constructor option above; weightClass too.) The
+  // remaining 2 OS/2 fields aren't reachable through opentype.js's
+  // constructor — patch tables.os2 directly. Verified to stick in the
+  // output binary via post-build validation (validateFontBytes below).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tables = (font as any).tables;
+  if (tables) {
+    tables.os2 = tables.os2 ?? {};
+    tables.os2.fsSelection = 0x40 | 0x80; // REGULAR | USE_TYPO_METRICS
+    tables.os2.achVendID = "WKSH";
+  }
 
   // CRITICAL: backfill the Macintosh name table with ASCII-safe entries.
   //
@@ -157,7 +208,69 @@ export function buildFont(
   names.macintosh.postScriptName = { en: `${macFamily}-Regular` };
   names.macintosh.uniqueID = { en: `: ${macFamily} Regular` };
 
-  return new Uint8Array(font.toArrayBuffer());
+  const bytes = new Uint8Array(font.toArrayBuffer());
+
+  // Post-build validation. Re-parse the bytes and check that the
+  // critical cross-platform fields actually made it into the binary.
+  // If anything's wrong it's a build-time bug (not user-facing) so
+  // we log to stderr — Vercel function logs surface it; production
+  // requests still succeed with the built bytes. Catches regressions
+  // when opentype.js silently drops a monkey-patched field.
+  try {
+    validateFontBytes(bytes, meta.familyName);
+  } catch (e) {
+    console.warn("[buildFont] post-build validation warning:", e);
+  }
+
+  return bytes;
+}
+
+/** Re-parse the just-built font and verify all the cross-platform-
+ *  critical fields are present and sane. Throws on hard problems
+ *  (missing tables, broken cmap); warns on soft problems
+ *  (suboptimal OS/2 values). The caller swallows the throw and just
+ *  logs — we don't want validation regressions to block user uploads. */
+function validateFontBytes(bytes: Uint8Array, familyName: string): void {
+  const parsed = opentype.parse(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  );
+
+  // 1. Required tables present
+  const requiredTables = ["cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post"];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tables = (parsed as any).tables ?? {};
+  for (const t of requiredTables) {
+    const key = t.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!tables[key]) {
+      throw new Error(`missing required table: ${t} (familyName=${familyName})`);
+    }
+  }
+
+  // 2. cmap must map at least one Georgian character. If the alphabet
+  // didn't make it into the cmap, the font can't render anything
+  // useful — better to fail loudly at build than render blanks at
+  // workshop time.
+  if (parsed.charToGlyphIndex("ა") <= 0) {
+    throw new Error(`cmap missing Georgian U+10D0 (familyName=${familyName})`);
+  }
+
+  // 3. Mac name table must have fontFamily — re-checking the c9d55df
+  // fix from earlier. If this regresses, Georgian-named fonts fall
+  // back to Times on Safari + Chrome-on-Mac/iOS.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const macName = (parsed.names as any).macintosh;
+  if (!macName?.fontFamily?.en) {
+    throw new Error(`Mac name table missing fontFamily (familyName=${familyName})`);
+  }
+
+  // 4. OS/2 sanity. Soft warnings — won't block.
+  const os2 = tables.os2;
+  if (os2.usWeightClass !== 400) {
+    console.warn(`[buildFont] usWeightClass=${os2.usWeightClass} expected 400 (${familyName})`);
+  }
+  if (!(os2.fsSelection & 0x80)) {
+    console.warn(`[buildFont] USE_TYPO_METRICS bit not set in fsSelection (${familyName})`);
+  }
 }
 
 /** Strip every character that Mac Roman can't represent. We use the

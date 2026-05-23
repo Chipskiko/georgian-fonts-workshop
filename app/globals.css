@@ -1350,6 +1350,22 @@ p {
   text-decoration: underline;
 }
 
+/* Stripped-down button variant for "↓ შ/თ" (download B&W) — matches the
+   text-link styling of .gallery-download next to it so the two
+   download options read as a pair, not a primary/secondary action. */
+.gallery-bnw {
+  font: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.gallery-bnw:hover {
+  text-decoration: underline;
+}
+
 .gallery-delete,
 .gallery-confirm,
 .gallery-cancel {
