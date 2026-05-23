@@ -456,30 +456,66 @@ export function CascadeStage({
     }
   }
 
+  /** Spawn one letter (with QWERTY → Georgian transliteration + random
+   *  font handling). Pulled into a helper so onKeyDown AND onInput can
+   *  both call it. The dual-handler is needed because Android Chrome
+   *  + Gboard fires onKeyDown with e.key='Process' or 'Unidentified'
+   *  during composition (especially with Georgian or autocorrect on)
+   *  and the real character only arrives via the input event's
+   *  nativeEvent.data field. Without this, OnePlus + similar Android
+   *  setups had typing in poster mode completely silently fail. */
+  function spawnTypedChar(rawCh: string): boolean {
+    if (savingInFlightRef.current) return false;
+    let ch = rawCh;
+    if (ch.length === 1 && !ALPHABET_SET.has(ch)) {
+      ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
+    }
+    if (!ALPHABET_SET.has(ch)) return false;
+    let fontId: string | null = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
+    if (fontId === RANDOM_FONT_ID) {
+      const fonts = allFontsRef.current;
+      if (fonts.length === 0) return false;
+      fontId = fonts[Math.floor(Math.random() * fonts.length)].id;
+    }
+    if (!fontId) return false;
+    spawnLetter(ch, fontId);
+    return true;
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // Block typing during save so the snapshot doesn't change mid-flight
     if (savingInFlightRef.current) {
       e.preventDefault();
       return;
     }
-    e.preventDefault();
-    let ch = e.key;
-    if (ch.length === 1 && !ALPHABET_SET.has(ch)) {
-      ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
+    // Skip composition placeholder keys — let the input handler below
+    // process the actual character once composition resolves. Android
+    // Gboard fires e.key='Process' here for in-progress composition
+    // and the matching real char arrives via onInput.
+    if (e.key === "Process" || e.key === "Unidentified" || e.nativeEvent.isComposing) {
+      return;
     }
-    if (!ALPHABET_SET.has(ch)) return;
-    // Resolve the font for this specific letter. In random mode each
-    // keystroke picks an independent font, so a typed string spans many
-    // typefaces. Otherwise honor the picker's choice.
-    let fontId: string | null = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
-    if (fontId === RANDOM_FONT_ID) {
-      const fonts = allFontsRef.current;
-      if (fonts.length === 0) return;
-      fontId = fonts[Math.floor(Math.random() * fonts.length)].id;
+    if (spawnTypedChar(e.key)) {
+      e.preventDefault();
+      setTick((n) => (n + 1) % 1_000_000);
     }
-    if (!fontId) return;
-    spawnLetter(ch, fontId);
-    setTick((n) => (n + 1) % 1_000_000);
+  }
+
+  /** Android Chrome + Gboard handler. Reads nativeEvent.data which holds
+   *  the actually-committed character(s) regardless of composition state.
+   *  Always clears the input afterwards so the controlled empty value
+   *  resets cleanly. Also runs for desktop browsers but the keydown
+   *  handler will have already consumed those chars (its preventDefault
+   *  cancels the input event before this fires for non-composition keys),
+   *  so this is mostly a no-op there. */
+  function handleInput(e: React.FormEvent<HTMLInputElement>) {
+    const data = (e.nativeEvent as InputEvent).data;
+    e.currentTarget.value = "";
+    if (!data) return;
+    let spawned = false;
+    for (const c of data) {
+      if (spawnTypedChar(c)) spawned = true;
+    }
+    if (spawned) setTick((n) => (n + 1) % 1_000_000);
   }
 
   function handlePageClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -1003,11 +1039,17 @@ export function CascadeStage({
         type="text"
         className="poster-key-input"
         onKeyDown={handleKeyDown}
+        onInput={handleInput}
         aria-label="cascade keyboard"
         autoComplete="off"
         autoCorrect="off"
         autoCapitalize="off"
         spellCheck={false}
+        // inputMode="none" would suppress the soft keyboard. We DO want
+        // the soft keyboard, so leave it default. enterKeyHint="done"
+        // makes the Gboard "Enter" button read as "done" instead of
+        // "send" — purely cosmetic.
+        enterKeyHint="done"
         value=""
         onChange={() => {}}
       />
