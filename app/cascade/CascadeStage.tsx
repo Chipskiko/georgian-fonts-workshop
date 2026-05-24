@@ -1432,10 +1432,24 @@ export function CascadeStage({
               onChange={(e) => setCurrentFontId(e.target.value)}
             >
               {/* First option = random mode. Sentinel value matched in
-                  handleKeyDown to pick a random font per keystroke. */}
+                  handleKeyDown to pick a random font per keystroke.
+                  Kept in the UI font (not styled with any custom font)
+                  so it's visually distinct from real font choices. */}
               <option value={RANDOM_FONT_ID}>შემთხვევითი</option>
               {allFonts.map((f) => (
-                <option key={f.id} value={f.id}>
+                // Render each option in its OWN font so the dropdown
+                // doubles as a visual preview — Georgian-named fonts
+                // (e.g. ორნამენტიკა) show their own custom letterforms
+                // in the picker. Latin-named fonts have no matching
+                // glyphs so they fall back to the UI font; that's
+                // harmless (the user still sees the plain text name).
+                // Native <select> applies font-family to <option> on
+                // desktop Chrome/Edge/Firefox/Safari. On mobile (iOS
+                // Safari, Android Chrome) the system picker overlay
+                // ignores option styles and shows everything in the
+                // system font — accepted trade-off for keeping the
+                // native picker's UX.
+                <option key={f.id} value={f.id} style={{ fontFamily: `"${f.id}"` }}>
                   {f.name}
                 </option>
               ))}
