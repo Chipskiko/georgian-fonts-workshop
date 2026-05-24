@@ -13,6 +13,12 @@ import {
 import { buildFont } from "@/lib/font-pipeline/build-font";
 import { saveFont } from "@/lib/font-storage";
 import { generateCalibrationPng } from "@/lib/font-pipeline/calibration";
+import {
+  deleteDebugImageByUrl,
+  newDebugFilename,
+  saveDebugImage,
+  sweepOldDebugImages,
+} from "@/lib/debug-storage";
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB upload cap
 
@@ -96,10 +102,14 @@ export async function previewFontFromScan(formData: FormData): Promise<PreviewRe
 }
 
 export type DebugResult =
-  | { ok: false; message: string; fallback?: { pngBase64: string; width: number; height: number; candidateCount: number; thresholdUsed: number } }
+  | { ok: false; message: string; fallback?: { url: string; width: number; height: number; candidateCount: number; thresholdUsed: number } }
   | {
       ok: true;
-      pngBase64: string;
+      /** URL of the debug image stored in Blob (or /debug/ on local FS). The
+       *  client should call `deleteDebugImage(url)` once the <img> loads to
+       *  free the storage immediately; an opportunistic sweep also collects
+       *  anything older than 5 min on the next debug invocation. */
+      url: string;
       width: number;
       height: number;
       cellCount: number;
@@ -116,13 +126,20 @@ export type DebugResult =
  * (no candidates? wrong ones picked? markers out of frame?) rather than
  * just a generic error.
  */
-// Maximum size for a fallback PNG (post-base64). React serializes server
-// action responses into the streaming RSC payload — multi-MB strings
-// in there can blow past Next/Vercel response limits and surface as a
-// generic "Server Components render" error in production with no
-// useful detail. Cap at 2MB; if the fallback PNG would be bigger, we
-// drop it and just return the textual message.
-const MAX_FALLBACK_B64_BYTES = 2 * 1024 * 1024;
+/**
+ * Save a debug image (returned by the renderer as a base64 JPEG) to
+ * Blob storage and return its public URL. The renderer's pngBase64
+ * field is the JPEG bytes already encoded — we just decode and stash.
+ *
+ * Centralized helper so both the success and fallback paths take the
+ * same well-tested route. Wraps storage failures into a thrown error
+ * so the action's outer try/catch surfaces a friendly message rather
+ * than leaving the client with a half-broken response.
+ */
+async function persistDebugImage(pngBase64: string): Promise<string> {
+  const bytes = Buffer.from(pngBase64, "base64");
+  return saveDebugImage(newDebugFilename(), bytes);
+}
 
 export async function debugScan(formData: FormData): Promise<DebugResult> {
   // Outermost try wraps the ENTIRE action body. Any uncaught throw past
@@ -133,6 +150,18 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
   // the underlying stack trace (the digest hash shown to the user maps
   // to that log entry).
   try {
+    // Opportunistic GC: reap any debug images older than the TTL before
+    // creating a new one. Cheap (one list call) and keeps Blob storage
+    // bounded without a separate cron. Failures here are non-fatal —
+    // we'd rather generate a debug image than abort because cleanup
+    // tripped, so swallow + log.
+    try {
+      const deleted = await sweepOldDebugImages();
+      if (deleted > 0) console.log(`[debugScan] swept ${deleted} stale debug image(s)`);
+    } catch (e) {
+      console.warn("[debugScan] sweep failed (non-fatal):", e);
+    }
+
     const file = formData.get("scan");
     if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
     if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
@@ -150,9 +179,14 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
 
     try {
       const overlay = await renderDebugOverlay(buffer);
+      // Push the rendered JPEG out-of-band so the RSC response carries
+      // only a short URL string. Avoids the ~1MB streaming-payload
+      // limit that surfaced as the generic "Server Components render"
+      // error on high-res phone scans.
+      const url = await persistDebugImage(overlay.pngBase64);
       return {
         ok: true,
-        pngBase64: overlay.pngBase64,
+        url,
         width: overlay.width,
         height: overlay.height,
         cellCount: overlay.layout.cells.length,
@@ -165,16 +199,21 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
       // though the full pipeline couldn't complete.
       try {
         const fallback = await renderDetectionDebug(buffer);
-        // Guard: oversized base64 responses cause Next/Vercel to bounce
-        // with the generic "Server Components render" error. Drop the
-        // image and just send the message in that case.
-        if (fallback.pngBase64.length > MAX_FALLBACK_B64_BYTES) {
-          console.warn(
-            `[debugScan] fallback PNG too large (${fallback.pngBase64.length}b), dropping`,
-          );
-          return { ok: false, message };
-        }
-        return { ok: false, message, fallback };
+        // Same out-of-band trick as the success path — the old size
+        // guard becomes unnecessary since we're not returning base64
+        // through the RSC payload anymore.
+        const fallbackUrl = await persistDebugImage(fallback.pngBase64);
+        return {
+          ok: false,
+          message,
+          fallback: {
+            url: fallbackUrl,
+            width: fallback.width,
+            height: fallback.height,
+            candidateCount: fallback.candidateCount,
+            thresholdUsed: fallback.thresholdUsed,
+          },
+        };
       } catch (fbErr) {
         console.error("[debugScan] renderDetectionDebug failed:", fbErr);
         return { ok: false, message };
@@ -188,6 +227,21 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
     console.error("[debugScan] top-level catch:", top);
     const msg = top instanceof Error ? top.message : "უცნობი შეცდომა";
     return { ok: false, message: `დებაგი ჩავარდა: ${msg}` };
+  }
+}
+
+/**
+ * Client-side cleanup hook. The MakeFontForm img's onLoad/onError fires
+ * this so the blob is freed within a second or two of being created in
+ * the typical happy path. Best-effort — failures are swallowed because
+ * the opportunistic sweep in debugScan covers any leaks.
+ */
+export async function deleteDebugImage(url: string): Promise<void> {
+  if (!url) return;
+  try {
+    await deleteDebugImageByUrl(url);
+  } catch (e) {
+    console.warn("[deleteDebugImage] failed (non-fatal):", e);
   }
 }
 
@@ -221,6 +275,40 @@ export async function getCalibrationImage(): Promise<{ ok: true; base64: string 
  * The form sends the file once (as a base64-encoded blob) and caches it
  * client-side; subsequent re-renders are pure server-side recompute.
  */
+/**
+ * RSC payload safety margin for the tuner. Each tunableDebugScan
+ * response carries the rendered view's base64 — same ~1MB hard limit
+ * as debugScan. Unlike debugScan (which writes out-of-band to Blob),
+ * the tuner stays inline because slider drags re-fire on every value
+ * change and we don't want one blob write+delete per drag. Instead
+ * we re-encode the JPEG at lower quality until it fits.
+ */
+const MAX_TUNER_B64_BYTES = 900_000;
+
+/**
+ * If `b64` is over the RSC limit, re-encode the underlying JPEG at
+ * progressively lower quality until it fits. Returns the resized
+ * base64 or null if even q15 won't fit (caller should drop the image
+ * and surface a textual message instead of risking the "Server
+ * Components render" wrapper).
+ *
+ * No-op fast path when the input is already under the limit, so the
+ * common case pays nothing.
+ */
+async function fitTunerImage(b64: string): Promise<string | null> {
+  if (b64.length <= MAX_TUNER_B64_BYTES) return b64;
+  const sharp = (await import("sharp")).default;
+  const buf = Buffer.from(b64, "base64");
+  for (const quality of [60, 40, 25, 15]) {
+    const out = (await sharp(buf).jpeg({ quality }).toBuffer()).toString("base64");
+    if (out.length <= MAX_TUNER_B64_BYTES) {
+      console.log(`[tunableDebugScan] recompressed to q${quality} (${out.length}b)`);
+      return out;
+    }
+  }
+  return null;
+}
+
 export async function tunableDebugScan(
   fileBase64: string,
   view: DebugView,
@@ -248,6 +336,17 @@ export async function tunableDebugScan(
         blur,
         traceThreshold,
       });
+      const fitted = await fitTunerImage(debug.pngBase64);
+      if (fitted === null) {
+        console.warn(
+          `[tunableDebugScan] view '${view}' too large even at q15, dropping`,
+        );
+        return {
+          ok: false,
+          message: "სურათი ძალიან დიდია გადასაცემად — სცადე სხვა ხედი ან შეამცირე სკანი",
+        };
+      }
+      debug.pngBase64 = fitted;
       return { ok: true, debug };
     } catch (e) {
       console.error("[tunableDebugScan] renderDebugView failed:", e);

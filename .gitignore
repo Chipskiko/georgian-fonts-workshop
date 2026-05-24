@@ -17,6 +17,16 @@
 /.next/
 /out/
 
+# workshop runtime artifacts. In local dev the storage adapters write
+# here (lib/poster-storage, lib/debug-storage); in production they
+# write to Vercel Blob. Keep these dirs out of git so dev experiments
+# don't accidentally check in someone's poster or stale debug image.
+/public/posters/
+/public/debug/
+
+# claude code session state — per-developer, not shared
+.claude/
+
 # production
 /build
 

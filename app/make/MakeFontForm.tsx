@@ -5,6 +5,7 @@ import {
   previewFontFromScan,
   saveFontFromPreview,
   debugScan,
+  deleteDebugImage,
   tunableDebugScan,
   type PreviewResult,
   type DebugResult,
@@ -62,7 +63,7 @@ export function MakeFontForm() {
   const [preview, setPreview] = useState<Extract<PreviewResult, { ok: true }> | null>(null);
   const [debug, setDebug] = useState<Extract<DebugResult, { ok: true }> | null>(null);
   const [debugFallback, setDebugFallback] = useState<
-    null | { pngBase64: string; width: number; height: number; candidateCount: number; thresholdUsed: number }
+    null | { url: string; width: number; height: number; candidateCount: number; thresholdUsed: number }
   >(null);
   // Which path the client-side straightenScan took on the last upload.
   // Shown as a tiny status line — "warp" is the desirable case; "fallback"
@@ -80,6 +81,26 @@ export function MakeFontForm() {
   const styleRef = useRef<HTMLStyleElement | null>(null);
   // Token to ignore stale debounced fetches when params change rapidly
   const tunerTokenRef = useRef(0);
+
+  // Free debug-image storage when the user dismisses the preview or
+  // when a fresh debug run replaces the previous one. The server also
+  // sweeps stale debug images opportunistically on each invocation, so
+  // these cleanups are the fast path — sweep is the safety net for
+  // tab-closed / network-flake cases.
+  useEffect(() => {
+    if (!debug) return;
+    const url = debug.url;
+    return () => {
+      void deleteDebugImage(url);
+    };
+  }, [debug]);
+  useEffect(() => {
+    if (!debugFallback) return;
+    const url = debugFallback.url;
+    return () => {
+      void deleteDebugImage(url);
+    };
+  }, [debugFallback]);
 
   // Inject (and clean up) a temporary @font-face for the preview.
   // Uses a blob URL rather than a base64 data URL so the @font-face CSS
@@ -400,7 +421,7 @@ export function MakeFontForm() {
                 {debug.cellCount} cells detected — cyan dots = markers, pink rects = cell crops
               </p>
               <img
-                src={`data:image/jpeg;base64,${debug.pngBase64}`}
+                src={debug.url}
                 width={debug.width}
                 height={debug.height}
                 alt="debug overlay"
@@ -423,7 +444,7 @@ export function MakeFontForm() {
                 {debugFallback.thresholdUsed}. green = top 4 (would be picked), yellow = extras.
               </p>
               <img
-                src={`data:image/jpeg;base64,${debugFallback.pngBase64}`}
+                src={debugFallback.url}
                 width={debugFallback.width}
                 height={debugFallback.height}
                 alt="detection debug"
@@ -491,7 +512,7 @@ export function MakeFontForm() {
                 {debug.cellCount} cells detected — cyan dots = markers, pink rects = cell crops
               </p>
               <img
-                src={`data:image/jpeg;base64,${debug.pngBase64}`}
+                src={debug.url}
                 width={debug.width}
                 height={debug.height}
                 alt="debug overlay"
