@@ -258,6 +258,16 @@ export function CascadeStage({
   const rotateHandleRef = useRef<{ letterId: number | null }>({
     letterId: null,
   });
+  // True if the user has drawn anything on the draw canvas in the
+  // current session (since the last clearAll / save). Drives whether
+  // the clear-poster X button is enabled — without this, drawings-only
+  // posters (no typed letters) couldn't be cleared with the X tool.
+  // Set to true on every pencilStroke/pencilDot, reset to false in
+  // clearDrawCanvas (which is called by both clearAll and saveAndReset).
+  // Note: not reset by the eraser — if the user erases everything by
+  // hand, hasDrawing stays true and the X button stays enabled. That's
+  // acceptable overreach (clicking X with nothing to clear is a no-op).
+  const [hasDrawing, setHasDrawing] = useState(false);
   // All currently-active pointers on the stage. React only fires events
   // for one pointer at a time, so the only way to detect multi-touch
   // (2-finger pinch-rotate) is to remember the others. Keyed by
@@ -389,7 +399,10 @@ export function CascadeStage({
   async function saveAndReset() {
     if (savingInFlightRef.current) return;
     if (!stageRef.current) return;
-    if (runtime.letters.length === 0) return;
+    // Allow save if EITHER letters or drawings exist — drawing-only
+    // posters (pencil sketches with no typed text) are a legitimate
+    // workshop output. Previously letters-only check blocked them.
+    if (runtime.letters.length === 0 && !hasDrawing) return;
     savingInFlightRef.current = true;
     setSaveStatus("saving");
     try {
@@ -569,6 +582,9 @@ export function CascadeStage({
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
+    // Drop the "has drawing" flag so the X button disables itself
+    // again until the user draws something new.
+    if (hasDrawing) setHasDrawing(false);
   }
 
   /** Draw a stroke segment from (fx,fy) to (tx,ty) in CSS coords. Coords
@@ -586,6 +602,7 @@ export function CascadeStage({
     ctx.moveTo(fx * DRAW_SCALE, fy * DRAW_SCALE);
     ctx.lineTo(tx * DRAW_SCALE, ty * DRAW_SCALE);
     ctx.stroke();
+    if (!hasDrawing) setHasDrawing(true);
   }
 
   function pencilDot(x: number, y: number) {
@@ -602,6 +619,7 @@ export function CascadeStage({
       Math.PI * 2,
     );
     ctx.fill();
+    if (!hasDrawing) setHasDrawing(true);
   }
 
   /** Erase a stroke of pixels from (fx,fy) to (tx,ty). Uses
@@ -1177,7 +1195,11 @@ export function CascadeStage({
               onClick={handleClearPoster}
               aria-label="clear poster"
               title="clear poster (letters + drawings)"
-              disabled={letterCount === 0}
+              // Enabled if EITHER there are letters OR there's a
+              // drawing — was previously letters-only, which meant a
+              // pencil-only poster (drawn shapes with no typed letters)
+              // couldn't be cleared via the X button.
+              disabled={letterCount === 0 && !hasDrawing}
             >
               <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
                 <path
@@ -1368,7 +1390,11 @@ export function CascadeStage({
             type="button"
             className="cascade-save-btn"
             onClick={() => void saveAndReset()}
-            disabled={letterCount === 0 || saveStatus === "saving"}
+            // Save is enabled when there's SOMETHING on the canvas —
+            // typed letters OR pencil drawing — and a save isn't
+            // already in flight. Consistent with the X clear button's
+            // disabled rule above.
+            disabled={(letterCount === 0 && !hasDrawing) || saveStatus === "saving"}
           >
             შენახვა
           </button>

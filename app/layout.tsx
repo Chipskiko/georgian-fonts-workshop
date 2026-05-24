@@ -4,7 +4,7 @@ import { fontFaceCss, getFonts } from "@/lib/fonts";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "georgian fonts workshop",
+  title: "xara-font-inator",
   description: "custom georgian typography from the workshop.",
   // iOS standalone-mode flags. When a participant Adds to Home Screen,
   // launching from the icon opens the site without Safari chrome
