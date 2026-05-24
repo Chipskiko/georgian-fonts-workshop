@@ -30,6 +30,41 @@ body {
   touch-action: manipulation;
 }
 
+/* Phone-landscape lock. The cascade + add page layouts were
+   hand-tuned for narrow portrait viewports — landscape on a phone
+   shows them stretched + wrong-aspect, sometimes with controls
+   off-screen. screen.orientation.lock("portrait") only works in
+   fullscreen / PWA mode (not regular browser tabs), so we do a
+   CSS-only "please rotate" overlay instead.
+   Trigger: hover:none (touch device, not desktop with a small
+   resized window) + landscape orientation + viewport short enough
+   that the layout actually breaks. Three predicates so a tablet
+   in landscape (which has plenty of room) doesn't trigger it,
+   and a desktop user resizing their window narrow won't see it. */
+@media (hover: none) and (orientation: landscape) and (max-height: 500px) {
+  body::after {
+    content: "სცადე პორტრეტი 📱↩";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 30px;
+    font-family: var(--ui-georgian);
+    text-transform: lowercase;
+    font-size: 1.6em;
+    line-height: 1.3;
+  }
+  /* Block scroll + interaction with the page behind. */
+  body {
+    overflow: hidden;
+  }
+}
+
 body {
   font-family: Times, "Times New Roman", serif;
   font-size: 1.3em;
@@ -1128,7 +1163,7 @@ p {
   cursor: url("/cursors/eraser.svg") 16 16, crosshair;
 }
 .cascade-a4-stage[data-tool="type"] {
-  cursor: text;
+  cursor: url("/cursors/type.svg") 16 16, text;
 }
 
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions
