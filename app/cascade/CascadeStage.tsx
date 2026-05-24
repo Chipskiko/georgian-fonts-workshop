@@ -556,7 +556,55 @@ export function CascadeStage({
     savingInFlightRef.current = true;
     setSaveStatus("saving");
     try {
+      // FONT-LOAD RACE FIX:
+      //
+      // Plain `await document.fonts.ready` resolves IMMEDIATELY if no
+      // font is currently in the loading pipeline — it doesn't wait
+      // for fonts that haven't been requested yet. Users were saving
+      // posters where the cascade letters rendered as system fallback
+      // (tiny default Georgian) because:
+      //   1. User spawned a letter → ensureFontFaceLoaded() injects
+      //      @font-face declaration + kicks off FontFace.load()
+      //   2. User immediately taps save before the binary downloads
+      //   3. document.fonts.ready resolves (nothing actively loading)
+      //   4. html2canvas snapshots → font binary not present →
+      //      fallback rendered → saved JPG has wrong glyphs
+      // Live UI later swaps to the custom font (font-display:swap)
+      // so the preview LOOKS right, but the bytes captured are fallback.
+      //
+      // Belt-and-suspenders fix:
+      //   (a) Enumerate every fontId currently on the stage (any
+      //       fontId used by a letter, plus the active picker font in
+      //       case it differs).
+      //   (b) Explicitly `document.fonts.load("Npx <id>")` each one.
+      //       This kicks the browser to actually fetch any missing
+      //       binary AND returns a promise that resolves only when
+      //       the font is ready for paint.
+      //   (c) Final `await document.fonts.ready` for fonts loaded via
+      //       CSS-only paths the FontFace API didn't see.
+      //   (d) 100ms paint settle: even after fonts.load resolves, the
+      //       browser hasn't necessarily re-laid-out the stage with
+      //       the new font yet. One macrotask + 100ms gives the
+      //       layout/paint pass time to land before html2canvas
+      //       walks the DOM.
+      const fontsInUse = new Set<string>();
+      for (const l of runtime.letters) fontsInUse.add(l.fontId);
+      if (currentFontIdRef.current && currentFontIdRef.current !== RANDOM_FONT_ID) {
+        fontsInUse.add(currentFontIdRef.current);
+      }
+      await Promise.all(
+        Array.from(fontsInUse).map((fid) =>
+          // 24px is arbitrary — document.fonts.load only uses the family
+          // name; the size is required by the FontFaceSet API signature.
+          // .catch swallows network failures so one bad font doesn't
+          // abort the whole save (the offending letter renders fallback
+          // but everything else stays correct).
+          document.fonts.load(`24px "${fid}"`).catch(() => undefined),
+        ),
+      );
       await document.fonts.ready;
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
       const html2canvas = (await import("html2canvas-pro")).default;
       // Compute scale from the actual rendered width — the stage is
       // responsive on mobile (smaller than A4_WIDTH), so a fixed scale
