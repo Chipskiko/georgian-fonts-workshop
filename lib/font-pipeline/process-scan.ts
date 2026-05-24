@@ -645,7 +645,138 @@ async function cellStageBinary(cellRaw: Buffer, wPx: number, hPx: number): Promi
   for (let i = 0; i < N; i++) {
     out[i] = norm[i] < threshold ? 0 : 255;
   }
+  // Post-threshold: fill thick-outline-drawn silhouettes. Two-clause
+  // gate inside fillLargeEnclosedInteriors:
+  //   1. Cell ink fraction ≥ 15% → looks like a thick outline, not a
+  //      thin-stroke letter where enclosed regions are part of the
+  //      design (counters, closed loops, decorative boxes).
+  //   2. Each enclosed region's area > 200 px → real silhouette
+  //      interior, not paper-texture noise.
+  // Only when BOTH clauses pass does the region get filled.
+  fillLargeEnclosedInteriors(out, wPx, hPx, ENCLOSED_FILL_MIN_PIXELS, ENCLOSED_FILL_MIN_INK_FRACTION);
   return out;
+}
+
+/** Minimum size (in pixels) for an enclosed white region to be
+ *  flood-filled with ink. Below this, the region is treated as noise
+ *  (paper-texture speckles inside ink strokes) and left alone. */
+const ENCLOSED_FILL_MIN_PIXELS = 200;
+
+/** Minimum ink fraction in the cell for flood-fill to consider it a
+ *  "thick-outlined silhouette" candidate. Below this, the cell is
+ *  treated as a thin-stroke letter where enclosed regions are part
+ *  of the design (closed loops, counters, decorative boxes) and
+ *  should NOT be filled.
+ *
+ *  Calibration on a 280×320 cell (~90K pixels):
+ *    - Thick-outlined pots: 20-45% ink → above cutoff, fill enclosed ✓
+ *    - Solid-filled pots: caught by HIGH_FILL bypass earlier, never
+ *      reach this check at all
+ *    - Thin-stroke letters (workshop fonts): 5-10% ink → below cutoff,
+ *      keep enclosed regions intact ✓
+ *
+ *  Combined with ENCLOSED_FILL_MIN_PIXELS this gives a two-clause
+ *  gate: ONLY fill when the cell looks like a deliberate silhouette
+ *  AND the enclosed region is large enough to be intentional.
+ */
+const ENCLOSED_FILL_MIN_INK_FRACTION = 0.15;
+
+/**
+ * In-place flood-fill of "enclosed" white regions in a binary cell.
+ * Algorithm:
+ *   1. Iterative 4-connected BFS labels every paper (255) connected
+ *      component. While walking, note whether the component touches
+ *      the cell border (those are exterior, not enclosed).
+ *   2. Count total ink (0) pixels — proxy for "ring area" surrounding
+ *      any enclosed region. Works because workshop cells contain a
+ *      single shape; for multi-shape cells the heuristic still tends
+ *      to behave reasonably since enclosure dominates the comparison.
+ *   3. For each non-border-touching component, fill it with ink if
+ *      its area > ratio × ink area.
+ *
+ * Cost: one full pass + one stack-based traversal per component.
+ * For a ~280×320 cell that's ~90K pixels — runs in <5ms in practice.
+ */
+function fillLargeEnclosedInteriors(
+  buf: Buffer,
+  w: number,
+  h: number,
+  minPixels: number,
+  minInkFraction: number,
+): void {
+  const N = w * h;
+  // visited[i] marks paper pixels that have been assigned to a
+  // component (or are ink, which we never walk into). Doubles as
+  // labels — we only need connectivity, not the label id itself.
+  const visited = new Uint8Array(N);
+  let inkCount = 0;
+  for (let i = 0; i < N; i++) {
+    if (buf[i] === 0) {
+      visited[i] = 1; // ink pixels are "done"
+      inkCount++;
+    }
+  }
+
+  // Quick degenerate-case bailout. No paper or no ink → nothing to do.
+  if (inkCount === 0 || inkCount === N) return;
+
+  // Gate 1: cell-wide ink fraction. Thin-stroke letter cells fall
+  // below this threshold and we skip the whole pass — their enclosed
+  // shapes (counters, closed loops, decorative boxes) are part of
+  // the design, not "outlines waiting to be filled". Only cells with
+  // thick outlines / dense ink reach the per-region check below.
+  if (inkCount / N < minInkFraction) return;
+
+  const stack = new Int32Array(N);
+  let filled = 0;
+
+  for (let start = 0; start < N; start++) {
+    if (visited[start]) continue;
+    // BFS this paper component, tracking pixels + border-touch flag.
+    let top = 0;
+    stack[top++] = start;
+    visited[start] = 1;
+    const component: number[] = [start];
+    let touchesBorder = false;
+    while (top > 0) {
+      const p = stack[--top];
+      const x = p % w;
+      const y = (p - x) / w;
+      if (x === 0 || x === w - 1 || y === 0 || y === h - 1) {
+        touchesBorder = true;
+      }
+      // 4-connected neighbors. Skip diagonals so a 1-pixel diagonal
+      // gap in the outline doesn't leak the interior into the border.
+      if (x > 0 && !visited[p - 1]) {
+        visited[p - 1] = 1;
+        stack[top++] = p - 1;
+        component.push(p - 1);
+      }
+      if (x < w - 1 && !visited[p + 1]) {
+        visited[p + 1] = 1;
+        stack[top++] = p + 1;
+        component.push(p + 1);
+      }
+      if (y > 0 && !visited[p - w]) {
+        visited[p - w] = 1;
+        stack[top++] = p - w;
+        component.push(p - w);
+      }
+      if (y < h - 1 && !visited[p + w]) {
+        visited[p + w] = 1;
+        stack[top++] = p + w;
+        component.push(p + w);
+      }
+    }
+    if (touchesBorder) continue; // exterior background — leave alone
+    if (component.length >= minPixels) {
+      for (const p of component) buf[p] = 0;
+      filled += component.length;
+    }
+  }
+  if (filled > 0) {
+    console.log(`[fillLargeEnclosedInteriors] filled ${filled}px across enclosed regions`);
+  }
 }
 
 /** Stage 5: anti-alias the binary staircase. Potrace re-binarises this
