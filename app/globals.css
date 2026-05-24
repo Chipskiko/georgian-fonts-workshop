@@ -1431,24 +1431,30 @@ p {
 
 /* --- Selection overlay (bbox + rotation handle) ------------------------ */
 
-/* Yellow dashed border traces the selected letter. Box uses the same
-   transform pattern as .poster-letter so it co-rotates with the glyph. */
+/* Dashed border traces the selected letter. currentColor inherits
+   the poster fg via the stage's inline color: fg (user-picked,
+   defaults to pink), so the bbox stays visible against any bg —
+   was hardcoded to site --fg (yellow), which vanished against the
+   default yellow poster bg. Box uses the same transform pattern
+   as .poster-letter so it co-rotates. */
 .cascade-bbox {
-  border: 1.5px dashed var(--fg);
+  border: 1.5px dashed currentColor;
   box-sizing: border-box;
 }
 
-/* Thin spine connecting letter center → handle. Same yellow as the box. */
+/* Thin spine connecting letter center → handle. Inherits the same
+   currentColor as the bbox so they're always the same color. */
 .cascade-handle-spine {
-  background: var(--fg);
+  background: currentColor;
 }
 
-/* Drag handle: small yellow disc with a dark outline so it stays visible
-   on both a white poster and the surrounding pink page. cursor:grab is
-   the affordance; touch-action:none stops mobile from interpreting a
+/* Drag handle: small disc with a dark outline so it stays visible
+   on any poster bg. currentColor matches the poster fg, the dark
+   border keeps it readable even if fg == bg. cursor:grab is the
+   affordance; touch-action:none stops mobile from interpreting a
    handle-drag as page scroll/zoom. */
 .cascade-rotate-handle {
-  background: var(--fg);
+  background: currentColor;
   border: 1.5px solid #111;
   border-radius: 50%;
   cursor: grab;

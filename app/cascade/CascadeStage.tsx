@@ -609,10 +609,18 @@ export function CascadeStage({
           const imgData = bctx.getImageData(0, 0, bnwCanvas.width, bnwCanvas.height);
           const d = imgData.data;
           for (let i = 0; i < d.length; i += 4) {
-            const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
-            d[i] = y;
-            d[i + 1] = y;
-            d[i + 2] = y;
+            // Luminance (Rec. 709) → binary threshold at 160. Without
+            // the threshold the output is true grayscale and pots /
+            // letters print with a grey cast through a RISO (which
+            // expects pure ink-or-no-ink). At 160:
+            //   - Yellow bg (luma ≈ 222) → 255 (white) ✓
+            //   - Pink ink (luma ≈ 79) → 0 (black) ✓
+            //   - White/black extremes pass through unchanged
+            const y = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+            const bw = y < 160 ? 0 : 255;
+            d[i] = bw;
+            d[i + 1] = bw;
+            d[i + 2] = bw;
           }
           bctx.putImageData(imgData, 0, 0);
           bnwBlob = await new Promise<Blob | null>((res) =>
@@ -940,9 +948,15 @@ export function CascadeStage({
       // Tapping a letter both selects it (so the overlay appears) and
       // starts the drag-to-translate interaction.
       setSelectedLetterId(hit.id);
-      // Freeze the letter in place while dragging. Static bodies still
-      // collide with dynamic letters.
+      // Freeze the letter in place AND make it a phantom: setStatic
+      // pins position, isSensor=true makes other letters pass through
+      // it. The combination lets users build stable arrangements
+      // without falling letters bumping their placed ones around.
+      // We never undo isSensor — once placed, a letter stays
+      // non-colliding for the rest of the poster's lifetime. (Clearing
+      // the whole stage rebuilds everything from scratch.)
       Matter.Body.setStatic(hit.body, true);
+      hit.body.isSensor = true;
       dragRef.current = {
         letterId: hit.id,
         offsetX: hit.body.position.x - p.x,

@@ -28,8 +28,14 @@ async function fetchAndConvertToBnw(url: string): Promise<Blob> {
   const imgData = ctx.getImageData(0, 0, c.width, c.height);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
-    const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
-    d[i] = y; d[i + 1] = y; d[i + 2] = y;
+    // Luminance (Rec. 709) → binary threshold at 160. Same formula
+    // as the cascade's save-time bnw generation; keeps the legacy
+    // fallback consistent with the pre-computed bnw output. Without
+    // the threshold the output is pure grayscale with a grey cast
+    // that doesn't reproduce cleanly through RISO printing.
+    const y = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    const bw = y < 160 ? 0 : 255;
+    d[i] = bw; d[i + 1] = bw; d[i + 2] = bw;
   }
   ctx.putImageData(imgData, 0, 0);
   const out: Blob | null = await new Promise((res) =>
