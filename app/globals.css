@@ -1064,7 +1064,10 @@ p {
 .cascade-a4-stage {
   position: relative;
   overflow: hidden;
-  border: 2px solid var(--fg);
+  /* Darker yellow (not var(--fg) which IS the canvas-bright yellow) so
+     the stage edge stays visible against a yellow poster bg. Picks up
+     more contrast against the pink page background too. */
+  border: 2px solid #b39600;
   flex-shrink: 0;
   /* Desktop sizing — A4 portrait. Pointer events scale to physics via
      getBoundingClientRect, so any CSS-driven resize Just Works for
