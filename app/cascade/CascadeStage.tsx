@@ -418,6 +418,40 @@ export function CascadeStage({
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [pickerOpen]);
+
+  // Body scroll lock while the picker modal is open. On phones, when
+  // a user scrolls inside the picker's list and hits the top/bottom,
+  // iOS Safari + some Android browsers rubber-band the gesture into
+  // the page underneath — pulling the cascade canvas off-screen.
+  // overscroll-behavior:contain on the list (see globals.css) handles
+  // most cases, but iOS Safari is famously inconsistent about it, so
+  // we belt-and-suspenders by pinning body position:fixed at the
+  // current scrollY. On close we restore and scroll back to the
+  // original position so the user lands exactly where they were.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const scrollY = window.scrollY;
+    const prev = {
+      position: document.body.style.position,
+      top: document.body.style.top,
+      width: document.body.style.width,
+      overflow: document.body.style.overflow,
+    };
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.position = prev.position;
+      document.body.style.top = prev.top;
+      document.body.style.width = prev.width;
+      document.body.style.overflow = prev.overflow;
+      // Restore the scroll position the user had before opening —
+      // otherwise the page would jump to the top on close because
+      // position:fixed effectively reset scroll to 0.
+      window.scrollTo(0, scrollY);
+    };
+  }, [pickerOpen]);
   // Switching to the "type" tool opens the soft keyboard (focus the
   // hidden input); switching away blurs to dismiss the keyboard so it
   // stops eating screen space during drag/draw/erase.

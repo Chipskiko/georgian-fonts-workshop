@@ -1038,6 +1038,12 @@ p {
   /* Fade in so the dim doesn't snap-flash. Keep snappy (120ms) so the
      UI still feels responsive. */
   animation: poster-font-picker-fade 120ms ease-out;
+  /* touch-action:none stops the backdrop from forwarding scroll
+     gestures to the body underneath — the modal must absorb touches
+     even where they don't hit the list. Combined with the body-lock
+     effect (React-side, see CascadeStage useEffect) this prevents
+     iOS Safari's rubber-band bleed-through. */
+  touch-action: none;
 }
 
 @keyframes poster-font-picker-fade {
@@ -1114,6 +1120,15 @@ p {
      Keeps the X close button always reachable at the top. */
   overflow-y: auto;
   flex: 1;
+  /* Scroll-chaining containment. When the list reaches top/bottom,
+     overscroll:contain stops the gesture from rubber-banding into
+     the body underneath. touch-action:pan-y re-enables vertical
+     panning (the parent backdrop sets touch-action:none, which by
+     default would also block scrolling here). -webkit-overflow-
+     scrolling:touch gives momentum scrolling on iOS. */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .poster-font-picker-row {
