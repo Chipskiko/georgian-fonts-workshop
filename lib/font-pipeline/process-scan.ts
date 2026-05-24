@@ -156,6 +156,10 @@ export async function computeScanLayout(buffer: Buffer): Promise<ScanLayout> {
   for (const t of THRESHOLDS) {
     const result = await sharp(buffer)
       .rotate()
+      // Flatten ICC profile to sRGB so iPhone P3 photos process
+      // identically to desktop sRGB photos. See warpToCanonical for
+      // the full explanation.
+      .toColourspace("srgb")
       .resize(DETECT_W, detectH, { fit: "fill" })
       .greyscale()
       .normalize()
@@ -260,6 +264,15 @@ async function warpToCanonical(
 ): Promise<{ data: Buffer; width: number; height: number }> {
   const { data: src, info } = await sharp(buffer)
     .rotate()
+    // CRITICAL for phone uploads: iPhone photos are DCI-P3, and sharp
+    // preserves the embedded ICC profile by default. greyscale() then
+    // computes luma weights against the source's color space — for P3,
+    // dark midtones map noticeably darker in sRGB than they "should",
+    // which pushes already-bled outline-halo pixels past the Otsu cut
+    // and fills hollow shapes. toColourspace('srgb') forces an explicit
+    // ICC-aware conversion to sRGB BEFORE the greyscale, so phone
+    // uploads land at the same pixel values that desktop uploads do.
+    .toColourspace("srgb")
     .greyscale()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -675,6 +688,7 @@ export async function renderDetectionDebug(buffer: Buffer): Promise<{
   for (const t of THRESHOLDS) {
     const { data } = await sharp(buffer)
       .rotate()
+      .toColourspace("srgb") // see warpToCanonical for rationale
       .resize(DETECT_W, detectH, { fit: "fill" })
       .greyscale()
       .normalize()
@@ -1460,6 +1474,7 @@ export async function renderDebugView(
   // 1. Threshold once at the user's chosen value
   const { data: thresholdedBuf } = await sharp(buffer)
     .rotate()
+    .toColourspace("srgb") // see warpToCanonical for rationale
     .resize(DETECT_W, detectH, { fit: "fill" })
     .greyscale()
     .normalize()
