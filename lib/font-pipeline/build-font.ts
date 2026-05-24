@@ -235,8 +235,12 @@ function validateFontBytes(bytes: Uint8Array, familyName: string): void {
     bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
   );
 
-  // 1. Required tables present
-  const requiredTables = ["cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post"];
+  // 1. Required tables present. Skips hmtx because opentype.js's
+  // parser doesn't expose it as a table object — the hmtx data is
+  // folded into per-glyph advanceWidth/leftSideBearing fields. The
+  // binary still contains hmtx (otherwise the font wouldn't be valid
+  // OpenType) but parsed.tables.hmtx is undefined either way.
+  const requiredTables = ["cmap", "head", "hhea", "maxp", "name", "OS/2", "post"];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tables = (parsed as any).tables ?? {};
   for (const t of requiredTables) {
@@ -310,28 +314,153 @@ function svgPathToOpentype(d: string, _cellW: number, cellH: number): opentype.P
   const offsetX = SAFE_LEFT_BEARING;
   const offsetY = ASCENDER;
 
-  const tx = (x: number) => Math.round(x * scale + offsetX);
-  const ty = (y: number) => Math.round(offsetY - y * scale);
+  // Transform every command to font coords (y-up, scaled, offset) up
+  // front. Doing this BEFORE winding correction means the area sign of
+  // each subpath is computed in the same coordinate system that the
+  // final font renderer sees — no surprises from coord-system flips.
+  const transformed: ParsedCmd[] = cmds.map((cmd) => {
+    if (cmd.type === "Z") return cmd;
+    const newPoints = cmd.points.map(([x, y]) => [
+      Math.round(x * scale + offsetX),
+      Math.round(offsetY - y * scale),
+    ] as [number, number]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { type: cmd.type, points: newPoints } as any;
+  });
+
+  // CRITICAL: fix CFF contour winding for non-zero rule rendering.
+  //
+  // Symptom: existing fonts rendered as solid filled blobs on Android
+  // Chrome (FreeType) while macOS/iOS Safari kept hollows correctly.
+  // Diagnosed via shoelace area on the rendered glyphs — every
+  // contour in our fonts was CW (negative area in y-up). With both
+  // outer and inner contours winding the same direction, the
+  // non-zero fill rule (which OpenType CFF uses per spec) sums their
+  // winding numbers and fills the entire shape including holes.
+  // macOS CoreText silently falls back to even-odd in many cases;
+  // FreeType doesn't.
+  //
+  // Fix: ensure inner contours wind OPPOSITE to the outer contour
+  // (= positive signed area when outer is negative, and vice versa).
+  // Then non-zero rule: outer(±1) + inner(∓1) = 0 inside the hole.
+  const corrected = fixCFFWinding(transformed);
 
   const path = new opentype.Path();
-  for (const cmd of cmds) {
+  for (const cmd of corrected) {
     if (cmd.type === "M") {
       const [x, y] = cmd.points[0];
-      path.moveTo(tx(x), ty(y));
+      path.moveTo(x, y);
     } else if (cmd.type === "L") {
       const [x, y] = cmd.points[0];
-      path.lineTo(tx(x), ty(y));
+      path.lineTo(x, y);
     } else if (cmd.type === "C") {
       const [[x1, y1], [x2, y2], [x, y]] = cmd.points;
-      path.curveTo(tx(x1), ty(y1), tx(x2), ty(y2), tx(x), ty(y));
+      path.curveTo(x1, y1, x2, y2, x, y);
     } else if (cmd.type === "Q") {
       const [[x1, y1], [x, y]] = cmd.points;
-      path.quadraticCurveTo(tx(x1), ty(y1), tx(x), ty(y));
+      path.quadraticCurveTo(x1, y1, x, y);
     } else if (cmd.type === "Z") {
       path.close();
     }
   }
   return path;
+}
+
+/** Group commands into subpaths (by M), compute each subpath's signed
+ *  area in current coords, identify the largest-area subpath as "outer"
+ *  and reverse any other subpath that has the SAME winding direction
+ *  as outer. After this, the non-zero fill rule correctly treats inner
+ *  contours as holes. */
+function fixCFFWinding(allCmds: ParsedCmd[]): ParsedCmd[] {
+  // Split into subpaths
+  const subpaths: ParsedCmd[][] = [];
+  let current: ParsedCmd[] = [];
+  for (const cmd of allCmds) {
+    if (cmd.type === "M" && current.length > 0) {
+      subpaths.push(current);
+      current = [];
+    }
+    current.push(cmd);
+  }
+  if (current.length > 0) subpaths.push(current);
+  if (subpaths.length <= 1) return allCmds;
+
+  // Signed area for each subpath (shoelace formula on endpoints —
+  // close enough for winding-direction detection; full bezier
+  // integration not needed since we only care about the sign).
+  const areas = subpaths.map(signedArea);
+  let outerIdx = 0;
+  for (let i = 1; i < areas.length; i++) {
+    if (Math.abs(areas[i]) > Math.abs(areas[outerIdx])) outerIdx = i;
+  }
+  const outerSign = Math.sign(areas[outerIdx]);
+
+  const fixed: ParsedCmd[][] = subpaths.map((sp, i) => {
+    if (i === outerIdx) return sp;
+    if (Math.sign(areas[i]) === outerSign) return reverseSubpath(sp);
+    return sp;
+  });
+  return fixed.flat();
+}
+
+/** Shoelace area on the subpath's endpoint sequence. Sign indicates
+ *  winding: positive = CCW (in y-up), negative = CW. */
+function signedArea(subpath: ParsedCmd[]): number {
+  const pts: [number, number][] = [];
+  for (const c of subpath) {
+    if (c.type === "Z") continue;
+    pts.push(c.points[c.points.length - 1]);
+  }
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i];
+    const [x2, y2] = pts[(i + 1) % pts.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return area / 2;
+}
+
+/** Reverse a subpath's direction. Each segment becomes its reverse:
+ *  endpoints swap roles, cubic bezier control points swap order.
+ *  Requires the input to start with M and optionally end with Z. */
+function reverseSubpath(sp: ParsedCmd[]): ParsedCmd[] {
+  if (sp.length < 2 || sp[0].type !== "M") return sp;
+  const hasClose = sp[sp.length - 1].type === "Z";
+  // Collect endpoint of every non-Z command, in order.
+  const endpoints: [number, number][] = [];
+  for (const c of sp) {
+    if (c.type === "Z") continue;
+    endpoints.push(c.points[c.points.length - 1]);
+  }
+  if (endpoints.length === 0) return sp;
+
+  // Walk original segments in reverse. For segs[k], the original
+  // segment travels endpoints[k] → endpoints[k+1] (with optional
+  // bezier control points). Reversed, it travels endpoints[k+1] →
+  // endpoints[k] with control points reversed in order.
+  const segs = sp.slice(1).filter((c) => c.type !== "Z");
+  const out: ParsedCmd[] = [];
+  out.push({ type: "M", points: [endpoints[endpoints.length - 1]] });
+  for (let k = segs.length - 1; k >= 0; k--) {
+    const orig = segs[k];
+    const targetPoint = endpoints[k];
+    if (orig.type === "L") {
+      out.push({ type: "L", points: [targetPoint] });
+    } else if (orig.type === "C") {
+      // Original: prev → cp1 → cp2 → end. Reversed: end → cp2 → cp1 → prev.
+      out.push({
+        type: "C",
+        points: [orig.points[1], orig.points[0], targetPoint],
+      });
+    } else if (orig.type === "Q") {
+      out.push({
+        type: "Q",
+        points: [orig.points[0], targetPoint],
+      });
+    }
+  }
+  if (hasClose) out.push({ type: "Z", points: [] });
+  return out;
 }
 
 type ParsedCmd =
