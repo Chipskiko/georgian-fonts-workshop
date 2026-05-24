@@ -231,6 +231,13 @@ export function CascadeStage({
   const [currentFontId, setCurrentFontId] = useState<string | null>(
     initialFonts.length > 0 ? RANDOM_FONT_ID : null,
   );
+  // Custom font-picker popup state. Replaces the native <select> so the
+  // dropdown matches site styling (the iOS-style overlay clashed with
+  // the pink/yellow theme) AND each row can render in the font's own
+  // typeface (option-level fontFamily is unreliable on mobile native
+  // pickers).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   // Current pointer tool: move (drag/resize letters), pencil (draw lines),
   // eraser (delete letters + erase canvas pixels).
@@ -344,6 +351,29 @@ export function CascadeStage({
     ctx.fillRect(0, 0, c.width, c.height);
     ctx.restore();
   }, [fg]);
+
+  // Font-picker dismiss: clicking anywhere outside the picker or
+  // pressing Escape closes the popup. Mounted only while open so we
+  // don't pay for two extra document-level listeners during normal
+  // typing/dragging.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = pickerRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      setPickerOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPickerOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pickerOpen]);
   // Switching to the "type" tool opens the soft keyboard (focus the
   // hidden input); switching away blurs to dismiss the keyboard so it
   // stops eating screen space during drag/draw/erase.
@@ -1425,35 +1455,87 @@ export function CascadeStage({
               onChange={(e) => setFg(e.target.value)}
             />
           </label>
-          <div className="poster-font-picker">
+          {/* Custom font picker. Native <select> was replaced because
+              (a) its iOS-style overlay clashed with the site's pink/
+              yellow theme, and (b) per-option font-family doesn't
+              apply consistently on mobile native pickers — Georgian-
+              named fonts weren't showing their actual letterforms in
+              the dropdown. The custom version is fully styled and the
+              fontFamily inheritance works on every browser. */}
+          <div className="poster-font-picker" ref={pickerRef}>
             <span>შრიფტი</span>
-            <select
-              value={currentFontId ?? ""}
-              onChange={(e) => setCurrentFontId(e.target.value)}
+            <button
+              type="button"
+              className="poster-font-picker-trigger"
+              onClick={() => setPickerOpen((v) => !v)}
+              aria-haspopup="listbox"
+              aria-expanded={pickerOpen}
             >
-              {/* First option = random mode. Sentinel value matched in
-                  handleKeyDown to pick a random font per keystroke.
-                  Kept in the UI font (not styled with any custom font)
-                  so it's visually distinct from real font choices. */}
-              <option value={RANDOM_FONT_ID}>შემთხვევითი</option>
-              {allFonts.map((f) => (
-                // Render each option in its OWN font so the dropdown
-                // doubles as a visual preview — Georgian-named fonts
-                // (e.g. ორნამენტიკა) show their own custom letterforms
-                // in the picker. Latin-named fonts have no matching
-                // glyphs so they fall back to the UI font; that's
-                // harmless (the user still sees the plain text name).
-                // Native <select> applies font-family to <option> on
-                // desktop Chrome/Edge/Firefox/Safari. On mobile (iOS
-                // Safari, Android Chrome) the system picker overlay
-                // ignores option styles and shows everything in the
-                // system font — accepted trade-off for keeping the
-                // native picker's UX.
-                <option key={f.id} value={f.id} style={{ fontFamily: `"${f.id}"` }}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+              <span
+                className="poster-font-picker-current"
+                // Render the trigger label in the currently-selected
+                // font's typeface so you can see the active font at a
+                // glance. Random sentinel + missing-font fall through
+                // to the UI font via the var(--ui-georgian) fallback.
+                style={
+                  currentFontId && currentFontId !== RANDOM_FONT_ID
+                    ? { fontFamily: `"${currentFontId}", var(--ui-georgian)` }
+                    : undefined
+                }
+              >
+                {currentFontId === RANDOM_FONT_ID
+                  ? "შემთხვევითი"
+                  : allFonts.find((f) => f.id === currentFontId)?.name ?? "—"}
+              </span>
+              <span className="poster-font-picker-arrow" aria-hidden>
+                {pickerOpen ? "▴" : "▾"}
+              </span>
+            </button>
+            {pickerOpen ? (
+              <ul className="poster-font-picker-popup" role="listbox">
+                <li
+                  role="option"
+                  aria-selected={currentFontId === RANDOM_FONT_ID}
+                  className={
+                    "poster-font-picker-row poster-font-picker-row-random" +
+                    (currentFontId === RANDOM_FONT_ID
+                      ? " poster-font-picker-row-active"
+                      : "")
+                  }
+                  onClick={() => {
+                    setCurrentFontId(RANDOM_FONT_ID);
+                    setPickerOpen(false);
+                  }}
+                >
+                  შემთხვევითი
+                </li>
+                {allFonts.map((f) => (
+                  <li
+                    key={f.id}
+                    role="option"
+                    aria-selected={currentFontId === f.id}
+                    className={
+                      "poster-font-picker-row" +
+                      (currentFontId === f.id
+                        ? " poster-font-picker-row-active"
+                        : "")
+                    }
+                    onClick={() => {
+                      setCurrentFontId(f.id);
+                      setPickerOpen(false);
+                    }}
+                    // Each row renders its font name in that font's
+                    // own typeface — Georgian-named fonts show their
+                    // hand-drawn letterforms here. Latin-named fonts
+                    // have no Latin glyphs in their cmap so the name
+                    // falls back to the UI font (still readable).
+                    style={{ fontFamily: `"${f.id}", var(--ui-georgian)` }}
+                  >
+                    {f.name}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
           <button
             type="button"

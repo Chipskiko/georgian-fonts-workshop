@@ -964,30 +964,124 @@ p {
   font-family: var(--ui-georgian);
   text-transform: lowercase;
   font-size: 0.95em;
+  /* position:relative anchors the absolutely-positioned popup so it
+     sits flush against the trigger button instead of escaping to the
+     nearest positioned ancestor. */
+  position: relative;
 }
 
-.poster-font-picker select {
-  /* iOS Safari renders <select> with rounded native chrome and a
-     dropdown arrow regardless of CSS — appearance:none strips both,
-     border-radius:0 then matches the square outline of the site. */
+/* Trigger button — the replacement for the old <select>. Looks like
+   the site's other inline controls (1px yellow border on pink, sharp
+   corners) so it fits the cascade controls bar visually. */
+.poster-font-picker-trigger {
   appearance: none;
   -webkit-appearance: none;
-  -moz-appearance: none;
   border-radius: 0;
-  font-family: var(--ui-georgian);
-  font-size: 1em;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--fg);
-  padding: 4px 24px 4px 8px;
+  padding: 4px 8px;
   cursor: pointer;
-  /* Replace the native arrow with a flat ▾ glyph so the affordance
-     isn't lost when appearance is reset. */
-  background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%),
-    linear-gradient(135deg, var(--fg) 50%, transparent 50%);
-  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
+  font-family: var(--ui-georgian);
+  font-size: 1em;
+  text-transform: lowercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Min-width so a short font name (e.g. "w") doesn't make the trigger
+     collapse to a single character. Max-width so a very long name
+     doesn't push the save button off the row — overflow ellipses. */
+  min-width: 120px;
+  max-width: 220px;
+  line-height: 1.2;
+}
+
+.poster-font-picker-current {
+  /* Truncate long names with an ellipsis instead of wrapping — keeps
+     the trigger a single line so the control bar's height stays
+     consistent regardless of which font is selected. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  text-align: left;
+}
+
+.poster-font-picker-arrow {
+  font-size: 0.85em;
+  line-height: 1;
+  /* Slightly inset so the arrow doesn't touch the right border. */
+  margin-right: 2px;
+}
+
+/* Popup list. Anchored below the trigger, absolutely positioned so it
+   doesn't push surrounding controls down. z-index sits above the
+   cascade canvas (default 0) so it overlays letters when the picker
+   has many fonts and extends past the trigger's bounds. */
+.poster-font-picker-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  /* Width matches the trigger's min-width but can grow if rows
+     demand more (long custom letterform glyphs). */
+  min-width: 100%;
+  max-width: 340px;
+  /* Scroll when many fonts. ~6 rows visible at the default 1.5em
+     line-height + 8px padding ≈ 240px. */
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 50;
+  /* Subtle shadow so the popup reads as floating above the cascade
+     rather than blending into the controls bar. */
+  box-shadow: 2px 2px 0 0 var(--fg);
+}
+
+.poster-font-picker-row {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 1.1em;
+  line-height: 1.3;
+  /* No border between rows by default — keeps the list tight. We add
+     a 1px separator with the :not(:last-child) selector below. */
+  border-bottom: 1px solid var(--fg);
+  /* user-select:none stops accidental text-selection on rapid taps
+     during font-browsing. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Wrap long names rather than truncating — within the popup the
+     user wants to see the full name + custom letterforms. */
+  word-break: break-word;
+}
+
+.poster-font-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.poster-font-picker-row:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Active (currently-selected) row: inverted colors so it stands out
+   when scrolling through a long list. */
+.poster-font-picker-row-active {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Random sentinel row: smaller / italic / always rendered in the UI
+   font (no custom typeface override) so it's visually distinct from
+   real font entries below. */
+.poster-font-picker-row-random {
+  font-family: var(--ui-georgian);
+  font-style: italic;
+  font-size: 0.95em;
 }
 
 /* Fonts-used list under the cascade stage */
@@ -1035,11 +1129,12 @@ p {
   height: 28px;
 }
 
-.cascade-controls .poster-font-picker select {
+/* Match the cascade-controls 28px row height for the new trigger
+   button so it aligns with the color swatches and other inline
+   controls regardless of font-size differences. */
+.cascade-controls .poster-font-picker-trigger {
   height: 28px;
-  /* Right padding reserves room for the custom dropdown arrow drawn
-     via background-image (see .poster-font-picker select above). */
-  padding: 0 22px 0 8px;
+  padding: 0 10px;
   font-size: 1em;
   line-height: 1;
 }
