@@ -456,6 +456,29 @@ const UNIFORM_RANGE = 30;
 // classified as ink → the hollow filled solid. 1.5 is gentle enough to
 // keep faint pencil while not promoting JPEG-bleed haze into ink.
 const CONTRAST_FACTOR = 1.5;
+// High-fill detection. The bg-subtract step in cellStageNormalized
+// assumes ink is a small fraction of the cell — for a solid-black
+// silhouette (filled pot, dense ornament) the local blur estimate
+// matches the ink color, subtraction returns near-zero everywhere
+// except the cell edges, and potrace ends up tracing only the outer
+// ring. The result is hollow-outline glyphs instead of the intended
+// filled silhouettes.
+//
+// First attempt used a MEAN-luminance cutoff (100/255 ≈ 39% dark)
+// but that misfires for cells where the silhouette occupies ~50% of
+// the area surrounded by white border + a top-corner label letter
+// — the average lands around 128, above the cutoff, so the bypass
+// didn't trigger and pots came out hollow. Counting genuinely-dark
+// pixels (luminance < 50) instead is robust: a real filled
+// silhouette commits a large fraction of pixels deep into the ink
+// range, regardless of surrounding white area or labels.
+//
+// 0.20 = 20% of cell pixels deeply dark. Easily cleared by any
+// deliberate solid fill (pots in the test scan are ~40-60% dark
+// pixels); too high for any normal small-ink cell to accidentally
+// trigger (small pencil strokes occupy <5% of cell area).
+const HIGH_FILL_DARK_PIXEL_THRESHOLD = 50;
+const HIGH_FILL_DARK_PIXEL_FRACTION = 0.20;
 // Gamma curve applied after the linear contrast stretch. Both endpoints
 // (0 and 255) stay fixed; midtones get pushed darker via output =
 // (input/255)^GAMMA × 255. GAMMA > 1 = darker midtones, GAMMA = 1 =
@@ -508,8 +531,45 @@ async function cellStageBg(cellRaw: Buffer, wPx: number, hPx: number): Promise<B
  *      keeping both 0 and 255 anchored
  *
  * Together: more bimodal histogram for Otsu in stage 4, and visibly
- * stronger ink against a clean white background. */
+ * stronger ink against a clean white background.
+ *
+ * HIGH-FILL BYPASS: when the raw cell is mostly dark (solid silhouette
+ * like a filled pot), bg subtraction COLLAPSES the interior to white
+ * because the local blur estimate matches the ink color. Potrace then
+ * traces only the edge ring and the glyph comes out hollow. For cells
+ * darker than HIGH_FILL_MEAN_CUTOFF, skip bg subtraction and apply
+ * contrast+gamma directly to the raw — interior stays solidly dark,
+ * Otsu cleanly splits ink from any white border, potrace gets a full
+ * filled silhouette. */
 async function cellStageNormalized(cellRaw: Buffer, wPx: number, hPx: number): Promise<Buffer> {
+  // Count deeply-dark pixels — cheap single pass — to decide whether
+  // this cell is a small-ink-on-paper case (use bg-subtract) or a
+  // solid-fill silhouette (skip bg-subtract). See the constant
+  // comments for why dark-pixel-count works better than mean
+  // luminance for this detection.
+  let darkPixels = 0;
+  for (let i = 0; i < cellRaw.length; i++) {
+    if (cellRaw[i] < HIGH_FILL_DARK_PIXEL_THRESHOLD) darkPixels++;
+  }
+  const darkFraction = darkPixels / cellRaw.length;
+  const highFill = darkFraction >= HIGH_FILL_DARK_PIXEL_FRACTION;
+
+  // High-fill path: skip bg subtraction entirely. The raw cell already
+  // has solid-black ink against the cell's white border; we just need
+  // contrast+gamma to crisp it up for Otsu. NO blur estimate involved.
+  if (highFill) {
+    const out = Buffer.alloc(wPx * hPx);
+    for (let i = 0; i < cellRaw.length; i++) {
+      const boosted = 255 - (255 - cellRaw[i]) * CONTRAST_FACTOR;
+      const boostedClamped = boosted < 0 ? 0 : boosted > 255 ? 255 : boosted;
+      out[i] = GAMMA_LUT[Math.round(boostedClamped)];
+    }
+    return out;
+  }
+
+  // Normal-fill path: original bg-subtract pipeline. Works for small
+  // ink strokes on light paper — the blur cancels lighting variation
+  // and subtraction isolates the ink.
   const bg = await cellStageBg(cellRaw, wPx, hPx);
   const out = Buffer.alloc(wPx * hPx);
   for (let i = 0; i < cellRaw.length; i++) {
