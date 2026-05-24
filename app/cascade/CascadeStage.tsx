@@ -1524,9 +1524,15 @@ export function CascadeStage({
             return (
               <>
                 {/* Bounding box: rotates with the letter via the same
-                    transform pattern the letter span uses. */}
+                    transform pattern the letter span uses.
+                    data-html2canvas-ignore tells the save-poster
+                    snapshotter to skip this element — otherwise the
+                    dashed bbox + spine + handle bleed into the saved
+                    JPG when a letter happens to be selected at save
+                    time. */}
                 <div
                   className="cascade-bbox"
+                  data-html2canvas-ignore="true"
                   aria-hidden="true"
                   style={{
                     position: "absolute",
@@ -1544,6 +1550,7 @@ export function CascadeStage({
                     "letter's up-axis". */}
                 <div
                   className="cascade-handle-spine"
+                  data-html2canvas-ignore="true"
                   aria-hidden="true"
                   style={{
                     position: "absolute",
@@ -1565,6 +1572,7 @@ export function CascadeStage({
                 <div
                   className="cascade-rotate-handle"
                   data-cascade-handle="rotate"
+                  data-html2canvas-ignore="true"
                   aria-label="rotate letter"
                   role="button"
                   style={{
