@@ -114,6 +114,16 @@ function previewForFontName(name: string): string {
   return out;
 }
 
+/** Fixed sample text rendered in every picker row, regardless of what
+ *  the user named the font. The full Mkhedruli alphabet so every font
+ *  shows the same length preview — a one-letter-named font like "ა"
+ *  isn't reduced to a single glyph in the picker. Rendered as one
+ *  unbroken string (no spaces between letters) so CSS overflow:hidden
+ *  + white-space:nowrap can truncate it cleanly to whatever the row
+ *  width allows. The user-supplied name is still discoverable on
+ *  hover via the row's title attribute. */
+const FONT_PREVIEW_TEXT = ALPHABET.join("");
+
 type Letter = {
   id: number;
   body: Matter.Body;
@@ -1573,44 +1583,36 @@ export function CascadeStage({
                   >
                     შემთხვევითი
                   </li>
-                  {allFonts.map((f) => {
-                    // previewForFontName transliterates Latin letters
-                    // to their Georgian equivalents (kiko → კიკო) so
-                    // the font's own glyphs CAN render the name. Pure
-                    // Georgian names pass through unchanged. Digits
-                    // and unmapped chars become spaces (the font has
-                    // no glyph for them — leaving as space avoids
-                    // visible-tofu marks). The plain-text label was
-                    // removed per workshop feedback: users prefer the
-                    // picker to be ALL glyphs and nothing else, since
-                    // the visual identity IS the font.
-                    const preview = previewForFontName(f.name);
-                    return (
-                      <li
-                        key={f.id}
-                        role="option"
-                        aria-selected={currentFontId === f.id}
-                        className={
-                          "poster-font-picker-row" +
-                          (currentFontId === f.id
-                            ? " poster-font-picker-row-active"
-                            : "")
-                        }
-                        onClick={() => {
-                          setCurrentFontId(f.id);
-                          setPickerOpen(false);
-                        }}
-                        style={{ fontFamily: `"${f.id}", var(--ui-georgian)` }}
-                        // title= keeps the original filename
-                        // discoverable on hover for the case where the
-                        // user needs to look up which font is which by
-                        // its real name. Doesn't take up visual space.
-                        title={f.name}
-                      >
-                        {preview}
-                      </li>
-                    );
-                  })}
+                  {allFonts.map((f) => (
+                    // Every row renders the SAME sample text — the
+                    // full Mkhedruli alphabet — in the row's own font
+                    // family. CSS truncates whatever doesn't fit on a
+                    // single line, so every row gets a consistent
+                    // preview width regardless of the font's name.
+                    // Workshop feedback: a one-letter-named font was
+                    // showing only one glyph in the picker, which made
+                    // it impossible to judge the font's overall design.
+                    // Filename is on hover via title=.
+                    <li
+                      key={f.id}
+                      role="option"
+                      aria-selected={currentFontId === f.id}
+                      className={
+                        "poster-font-picker-row" +
+                        (currentFontId === f.id
+                          ? " poster-font-picker-row-active"
+                          : "")
+                      }
+                      onClick={() => {
+                        setCurrentFontId(f.id);
+                        setPickerOpen(false);
+                      }}
+                      style={{ fontFamily: `"${f.id}", var(--ui-georgian)` }}
+                      title={f.name}
+                    >
+                      {FONT_PREVIEW_TEXT}
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>

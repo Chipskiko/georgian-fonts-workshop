@@ -1123,16 +1123,21 @@ p {
   border-bottom: 1px solid var(--fg);
   user-select: none;
   -webkit-user-select: none;
-  /* Single-line layout — the row IS the custom-font preview. The
-     filename labels were removed per workshop feedback (picker
-     should be all glyphs). Filename is still available on hover via
-     the title= attribute for users who need to look it up. */
+  /* Single-line custom-font preview. Every row renders the FULL
+     alphabet (FONT_PREVIEW_TEXT in CascadeStage) in the row's font;
+     white-space:nowrap + overflow:hidden chops it to whatever fits
+     the row width. That way a one-letter-named font and a long-named
+     font get the same visual preview area — the picker shows MAXIMUM
+     letterforms per row, not just the name. */
   font-size: 1.6em;
   line-height: 1.15;
-  /* Min-height so a name that transliterates to all-spaces (e.g.
-     "123") still has a visible tap target. */
   min-height: 1.6em;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  /* text-overflow:clip (default) cuts at the row's right edge with no
+     trailing ellipsis — the custom fonts have no glyph for "…" anyway,
+     and the cleanly-cropped letters read better than partial ellipses. */
+  text-overflow: clip;
 }
 
 .poster-font-picker-row:last-child {
