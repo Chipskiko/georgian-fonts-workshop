@@ -1580,7 +1580,10 @@ export function CascadeStage({
                     // Georgian names pass through unchanged. Digits
                     // and unmapped chars become spaces (the font has
                     // no glyph for them — leaving as space avoids
-                    // visible-tofu marks).
+                    // visible-tofu marks). The plain-text label was
+                    // removed per workshop feedback: users prefer the
+                    // picker to be ALL glyphs and nothing else, since
+                    // the visual identity IS the font.
                     const preview = previewForFontName(f.name);
                     return (
                       <li
@@ -1597,24 +1600,14 @@ export function CascadeStage({
                           setCurrentFontId(f.id);
                           setPickerOpen(false);
                         }}
+                        style={{ fontFamily: `"${f.id}", var(--ui-georgian)` }}
+                        // title= keeps the original filename
+                        // discoverable on hover for the case where the
+                        // user needs to look up which font is which by
+                        // its real name. Doesn't take up visual space.
+                        title={f.name}
                       >
-                        <span
-                          className="poster-font-picker-row-preview"
-                          style={{ fontFamily: `"${f.id}", var(--ui-georgian)` }}
-                        >
-                          {preview}
-                        </span>
-                        {/* Plain-text label underneath so users can
-                            identify the font by its actual filename
-                            even before they've learned to recognize
-                            the custom letterforms. Suppressed when
-                            the name is already pure Georgian and
-                            equal to the preview — would be redundant. */}
-                        {f.name !== preview ? (
-                          <span className="poster-font-picker-row-label">
-                            {f.name}
-                          </span>
-                        ) : null}
+                        {preview}
                       </li>
                     );
                   })}

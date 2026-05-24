@@ -1050,13 +1050,16 @@ p {
   border: 1px solid var(--fg);
   box-shadow: 4px 4px 0 0 var(--fg);
   /* Fixed max width keeps long names from making the modal sprawl on
-     wide monitors; fits ~22 chars at the preview's 1.4em font size. */
+     wide monitors; fits ~22 chars at the preview's 1.6em font size. */
   width: 100%;
   max-width: 380px;
-  /* Modal is a flex column: fixed header + scrolling list. The
-     max-height + flex layout means a font count of 5 or 50 both feel
-     right — the list grows until it hits 80vh then scrolls inside. */
-  max-height: 80vh;
+  /* FIXED HEIGHT (not max-height) so the modal always renders the
+     same size regardless of font count. With 5 fonts the panel has
+     empty pink below the list; with 50 fonts the list scrolls
+     internally. Predictable layout, no jumpy resize as fonts are
+     added during the workshop. 70vh is generous enough to show
+     ~6-7 rows on a typical laptop, and stays comfortable on phones. */
+  height: 70vh;
   display: flex;
   flex-direction: column;
   font-family: var(--ui-georgian);
@@ -1114,18 +1117,21 @@ p {
 }
 
 .poster-font-picker-row {
-  padding: 10px 14px;
+  padding: 12px 14px;
   cursor: pointer;
   color: var(--fg);
   border-bottom: 1px solid var(--fg);
   user-select: none;
   -webkit-user-select: none;
-  /* Two-row layout: big custom-font preview on top, plain-text label
-     below it. Stack vertically for readability across very different
-     glyph heights (some custom fonts have huge descenders). */
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  /* Single-line layout — the row IS the custom-font preview. The
+     filename labels were removed per workshop feedback (picker
+     should be all glyphs). Filename is still available on hover via
+     the title= attribute for users who need to look it up. */
+  font-size: 1.6em;
+  line-height: 1.15;
+  /* Min-height so a name that transliterates to all-spaces (e.g.
+     "123") still has a visible tap target. */
+  min-height: 1.6em;
   word-break: break-word;
 }
 
@@ -1145,35 +1151,12 @@ p {
   color: var(--bg);
 }
 
-/* The big preview line — uses the font's own typeface. Larger size
-   so the custom letterforms are clearly readable in the picker. */
-.poster-font-picker-row-preview {
-  font-size: 1.6em;
-  line-height: 1.1;
-  /* Min-height anchors the row even when the preview is empty
-     (e.g. a name made entirely of digits transliterates to spaces). */
-  min-height: 1.1em;
-}
-
-/* Plain-text label under the preview — the filename as the user
-   typed it, in the UI font, so unfamiliar custom letterforms can
-   still be identified. Suppressed in JSX when name == preview
-   (pure-Georgian names) to avoid visual duplication. */
-.poster-font-picker-row-label {
-  font-family: var(--ui-georgian);
-  font-size: 0.85em;
-  opacity: 0.65;
-  text-transform: lowercase;
-}
-
 /* Random sentinel row: italic UI font, visually distinct from the
    real font entries (which use their own custom typefaces). */
 .poster-font-picker-row-random {
   font-family: var(--ui-georgian);
   font-style: italic;
   font-size: 1.05em;
-  /* Single line — no preview/label split for the sentinel. */
-  display: block;
 }
 
 /* Fonts-used list under the cascade stage */
