@@ -57,8 +57,14 @@ const ERASER_RADIUS_CSS = 14; // CSS px on screen
 
 type Tool = "move" | "pencil" | "eraser" | "type";
 
-const DEFAULT_BG = "#ffffff";
-const DEFAULT_FG = "#000000";
+// Default poster colors match the workshop's two-color palette
+// inverted from the site chrome — site is pink with yellow text, the
+// poster canvas starts as yellow with pink ink. Same colors the
+// onboarding explainer overlay (public/cascade-explainer.jpg) is drawn
+// in, so when the explainer dismisses on first interaction the empty
+// canvas underneath visually continues the same colorway.
+const DEFAULT_BG = "#ffea00"; // fluo yellow (matches CSS --fg)
+const DEFAULT_FG = "#ff10b8"; // fluo pink (matches CSS --bg)
 
 // Sentinel value used by the font-picker <select> to mean "pick a random
 // font for EACH letter spawned". Not a real font id (font ids derive from
@@ -268,6 +274,12 @@ export function CascadeStage({
   // hand, hasDrawing stays true and the X button stays enabled. That's
   // acceptable overreach (clicking X with nothing to clear is a no-op).
   const [hasDrawing, setHasDrawing] = useState(false);
+  // Onboarding overlay — drawn arrows + Georgian labels pointing at
+  // each tool. Shown on first mount, dismissed by ANY user interaction
+  // (pointer, key, button click). Per-session only — page reload shows
+  // it again. Stored as a hand-drawn JPEG in public/ so it visually
+  // continues the workshop's color palette and aesthetic.
+  const [showExplainer, setShowExplainer] = useState(true);
   // All currently-active pointers on the stage. React only fires events
   // for one pointer at a time, so the only way to detect multi-touch
   // (2-finger pinch-rotate) is to remember the others. Keyed by
@@ -358,6 +370,25 @@ export function CascadeStage({
       document.body.classList.remove("cascade-focused");
     };
   }, [tool]);
+
+  // Onboarding explainer dismiss-on-interaction. ANY user action (tap,
+  // keystroke, button click anywhere) takes the overlay down. Listeners
+  // are { once: true } so they self-remove after first fire; the
+  // cleanup return only matters if the component unmounts before any
+  // interaction (e.g., user navigates away on first load). Window-level
+  // capture phase catches events before they reach individual handlers,
+  // so the dismiss runs even if the user taps a tool button (whose own
+  // handler also fires normally — both can run from the same event).
+  useEffect(() => {
+    if (!showExplainer) return;
+    const dismiss = () => setShowExplainer(false);
+    window.addEventListener("pointerdown", dismiss, { once: true });
+    window.addEventListener("keydown", dismiss, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", dismiss);
+    };
+  }, [showExplainer]);
 
   /** Wipe the entire poster — letters + drawing strokes — without saving.
    * Used by the X (clear) tool-button; no confirmation since the action is
@@ -1241,6 +1272,30 @@ export function CascadeStage({
             height={SAVE_PX_H}
             style={{ width: "100%", height: "100%" }}
           />
+          {/* Onboarding explainer overlay. Hand-drawn arrows + Georgian
+              labels pointing at each tool. pointer-events:none so taps
+              fall through to the cascade-a4-stage's own pointerdown
+              handler — the global window listener on showExplainer
+              fires concurrently from any pointerdown anywhere, dropping
+              the overlay. Image is the same dimensions as the canvas
+              (SAVE_PX_W × SAVE_PX_H) so objectFit:fill covers exactly. */}
+          {showExplainer ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src="/cascade-explainer.jpg"
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "fill",
+                pointerEvents: "none",
+                zIndex: 5,
+              }}
+            />
+          ) : null}
           {runtime.letters.map((l) => (
             <span
               key={l.id}
