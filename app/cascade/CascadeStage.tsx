@@ -587,9 +587,46 @@ export function CascadeStage({
         );
       }
 
+      // B&W partner — luminance-weighted grayscale of the full poster.
+      // Generated here at save time so downloads can be instant fetches
+      // (no per-click client-side conversion in the gallery). Stored
+      // alongside the color file under poster_X_bnw.jpg. Best-effort:
+      // failure leaves the partner missing and the gallery's legacy
+      // fallback does the conversion on the fly.
+      //
+      // Rec. 709 luminance coefficients (same as Gallery's legacy
+      // fetchAndConvertToBnw helper) so the pre-computed bnw matches
+      // what the old code produced byte-for-byte except for being
+      // generated once at save time instead of per download.
+      let bnwBlob: Blob | null = null;
+      try {
+        const bnwCanvas = document.createElement("canvas");
+        bnwCanvas.width = canvas.width;
+        bnwCanvas.height = canvas.height;
+        const bctx = bnwCanvas.getContext("2d");
+        if (bctx) {
+          bctx.drawImage(canvas, 0, 0);
+          const imgData = bctx.getImageData(0, 0, bnwCanvas.width, bnwCanvas.height);
+          const d = imgData.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+            d[i] = y;
+            d[i + 1] = y;
+            d[i + 2] = y;
+          }
+          bctx.putImageData(imgData, 0, 0);
+          bnwBlob = await new Promise<Blob | null>((res) =>
+            bnwCanvas.toBlob(res, "image/jpeg", 0.92),
+          );
+        }
+      } catch (e) {
+        console.warn("[saveAndReset] bnw generation failed (non-fatal):", e);
+      }
+
       const fd = new FormData();
       fd.append("file", fullBlob, "poster.jpg");
       if (thumbBlob) fd.append("thumb", thumbBlob, "poster_thumb.jpg");
+      if (bnwBlob) fd.append("bnw", bnwBlob, "poster_bnw.jpg");
       const result = await uploadPoster(fd);
       if (!result.ok) throw new Error(result.message);
       // Wipe stage so the user can start the next poster immediately

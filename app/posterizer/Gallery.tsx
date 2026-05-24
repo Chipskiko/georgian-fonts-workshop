@@ -39,24 +39,55 @@ async function fetchAndConvertToBnw(url: string): Promise<Blob> {
   return out;
 }
 
-/** Per-tile B&W download trigger. Doesn't hit the server. Falls back
- *  to opening the color version in a new tab on conversion failure. */
-async function downloadBnw(url: string, id: string): Promise<void> {
+/** Trigger a browser download for a URL with a custom filename.
+ *  Used by both the pre-computed-bnw and legacy-conversion paths so
+ *  they share the same DOM-anchor click trick. */
+function triggerDownload(href: string, downloadName: string, revokeAfter = false): void {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = downloadName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (revokeAfter) {
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  }
+}
+
+/** Per-tile B&W download trigger. Prefers the pre-computed _bnw blob
+ *  cascade generated at save time (no client-side conversion needed).
+ *  Falls back to on-the-fly canvas conversion for legacy posters
+ *  uploaded before the dual-save change. Final fallback opens the
+ *  color version in a new tab if conversion itself fails. */
+async function downloadBnw(poster: StoredPoster): Promise<void> {
+  // "_bnw" before the extension so the file is obviously paired with
+  // the color version when both are saved into the same folder.
+  const downloadName = poster.id.replace(/(\.[^.]+)$/, "_bnw$1");
+  if (poster.bnwUrl) {
+    // Pre-computed path: just download the already-prepared blob. The
+    // fetch+blob URL roundtrip is needed because cross-origin URLs
+    // (Vercel Blob storage) don't honor <a download> directly — the
+    // browser navigates to the URL instead of saving it.
+    try {
+      const res = await fetch(poster.bnwUrl, { mode: "cors" });
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      triggerDownload(downloadUrl, downloadName, true);
+      return;
+    } catch (err) {
+      console.warn("[downloadBnw] pre-computed fetch failed, falling back to conversion:", err);
+      // fall through to legacy path
+    }
+  }
+  // Legacy path: posters saved before the dual-save change have no
+  // bnwUrl. Convert from color on the fly using the existing helper.
   try {
-    const outBlob = await fetchAndConvertToBnw(url);
+    const outBlob = await fetchAndConvertToBnw(poster.url);
     const downloadUrl = URL.createObjectURL(outBlob);
-    const a = document.createElement("a");
-    a.href = downloadUrl;
-    // Insert "_bnw" before the extension so the file is obviously paired
-    // with the color version when both are saved into the same folder.
-    a.download = id.replace(/(\.[^.]+)$/, "_bnw$1");
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    triggerDownload(downloadUrl, downloadName, true);
   } catch (err) {
-    console.warn("[downloadBnw] failed, opening color version instead:", err);
-    window.open(url, "_blank");
+    console.warn("[downloadBnw] conversion failed, opening color version instead:", err);
+    window.open(poster.url, "_blank");
   }
 }
 
@@ -80,7 +111,17 @@ async function downloadAllBnwZip(
   for (let i = 0; i < posters.length; i++) {
     const p = posters[i];
     try {
-      const bnwBlob = await fetchAndConvertToBnw(p.url);
+      // Prefer the pre-computed _bnw blob cascade generated at save
+      // time — just fetch and zip, no canvas work. Falls back to
+      // on-the-fly conversion for legacy posters uploaded before the
+      // dual-save change.
+      let bnwBlob: Blob;
+      if (p.bnwUrl) {
+        const res = await fetch(p.bnwUrl, { mode: "cors" });
+        bnwBlob = await res.blob();
+      } else {
+        bnwBlob = await fetchAndConvertToBnw(p.url);
+      }
       const name = p.id.replace(/(\.[^.]+)$/, "_bnw$1");
       zip.file(name, bnwBlob);
     } catch (e) {
@@ -259,7 +300,7 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
                 <button
                   type="button"
                   className="gallery-download gallery-bnw"
-                  onClick={() => void downloadBnw(p.url, p.id)}
+                  onClick={() => void downloadBnw(p)}
                   title="ჩამოტვირთე შავ-თეთრად"
                 >
                   ↓ შ/თ

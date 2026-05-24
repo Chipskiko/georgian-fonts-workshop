@@ -31,6 +31,13 @@ export type StoredPoster = {
   /** Public URL for the smaller gallery thumbnail. Undefined for
    *  legacy posters uploaded before thumbnail generation was added. */
   thumbUrl?: string;
+  /** Public URL for the pre-computed B&W (grayscale) partner. Generated
+   *  by the cascade at save time so per-tile + batch downloads can be
+   *  instant fetches with no client-side conversion. Undefined for
+   *  legacy posters uploaded before bnw partner generation was added;
+   *  the gallery falls back to on-the-fly canvas conversion in that
+   *  case (see Gallery.tsx fetchAndConvertToBnw). */
+  bnwUrl?: string;
   /** Epoch ms — for sorting newest-first. */
   createdAt: number;
 };
@@ -71,6 +78,30 @@ function thumbToFullName(thumb: string): string {
   return thumb.replace(/_thumb(\.[^.]+)$/, "$1");
 }
 
+/** B&W partners follow the same naming convention as thumbs:
+ *  `poster_<ts>_<rand>_bnw.jpg`. Cascade generates the bnw at save
+ *  time and uploads it alongside the color file; listing pairs them
+ *  the same way thumbs are paired. */
+function isBnw(name: string): boolean {
+  return /_bnw\.(jpe?g|png)$/i.test(name);
+}
+
+function fullToBnwName(full: string): string {
+  return full.replace(/(\.[^.]+)$/, "_bnw$1");
+}
+
+function bnwToFullName(bnw: string): string {
+  return bnw.replace(/_bnw(\.[^.]+)$/, "$1");
+}
+
+/** True when a file is a SIDECAR of another poster (thumb or bnw),
+ *  not a poster in its own right. Used everywhere we filter posters
+ *  out of an image listing — keep the parent posters, hide the
+ *  sidecars from gallery rows. */
+function isSidecar(name: string): boolean {
+  return isThumb(name) || isBnw(name);
+}
+
 // --- Local FS adapter ----------------------------------------------------
 
 function ensureFsDir() {
@@ -80,26 +111,35 @@ function ensureFsDir() {
 function listFs(): StoredPoster[] {
   if (!existsSync(POSTER_DIR_FS)) return [];
   const entries = readdirSync(POSTER_DIR_FS, { withFileTypes: true });
-  // First pass: collect all image filenames so thumbs can be paired.
+  // First pass: collect all image filenames so sidecars (thumb + bnw)
+  // can be paired against their parent posters in the second pass.
   const allImages: string[] = [];
   for (const e of entries) {
     if (!e.isFile() || !isImage(e.name)) continue;
     allImages.push(e.name);
   }
   const thumbSet = new Set(allImages.filter(isThumb));
+  const bnwSet = new Set(allImages.filter(isBnw));
   const out: StoredPoster[] = [];
   for (const name of allImages) {
-    if (isThumb(name)) continue; // thumbs aren't shown as separate posters
+    // Sidecars (thumb/bnw) are listed only via their parent, never as
+    // standalone posters in the gallery.
+    if (isSidecar(name)) continue;
     const full = path.join(POSTER_DIR_FS, name);
     const st = statSync(full);
     const thumbName = fullToThumbName(name);
+    const bnwName = fullToBnwName(name);
     const thumbUrl = thumbSet.has(thumbName)
       ? `/posters/${encodeURIComponent(thumbName)}`
+      : undefined;
+    const bnwUrl = bnwSet.has(bnwName)
+      ? `/posters/${encodeURIComponent(bnwName)}`
       : undefined;
     out.push({
       id: name,
       url: `/posters/${encodeURIComponent(name)}`,
       thumbUrl,
+      bnwUrl,
       createdAt: st.mtimeMs,
     });
   }
@@ -136,14 +176,18 @@ async function deleteFs(filename: string): Promise<void> {
   if (!isImage(safe)) throw new Error("არ არის პოსტერის ფაილი");
   const dest = path.join(POSTER_DIR_FS, safe);
   if (path.relative(POSTER_DIR_FS, dest).startsWith("..")) throw new Error("არასწორი მისამართი");
-  // Delete the full poster + its thumb sibling (best-effort on thumb).
+  // Delete the full poster + every sidecar (thumb + bnw). Best-effort
+  // on sidecars — a leftover sidecar is harmless (orphaned without a
+  // parent poster, never surfaces in the gallery) but we try anyway.
   if (existsSync(dest)) await unlink(dest);
-  const thumbDest = path.join(POSTER_DIR_FS, fullToThumbName(safe));
-  if (existsSync(thumbDest)) {
-    try {
-      await unlink(thumbDest);
-    } catch {
-      /* ok — leftover thumb is harmless */
+  for (const siblingName of [fullToThumbName(safe), fullToBnwName(safe)]) {
+    const sibling = path.join(POSTER_DIR_FS, siblingName);
+    if (existsSync(sibling)) {
+      try {
+        await unlink(sibling);
+      } catch {
+        /* ok — leftover sidecar is harmless */
+      }
     }
   }
 }
@@ -153,19 +197,23 @@ async function deleteFs(filename: string): Promise<void> {
 async function listBlob(): Promise<StoredPoster[]> {
   const { list } = await import("@vercel/blob");
   const { blobs } = await list({ prefix: BLOB_PREFIX });
-  // Build a lookup of thumb-name → URL so the second pass can pair each
-  // full poster with its corresponding thumb. Single Blob list call —
-  // doesn't double the network cost.
+  // Build lookups of sidecar-name → URL so the parent-poster pass can
+  // pair each full poster with its thumb + bnw partners. Single Blob
+  // list call covers all three (full + thumb + bnw) — doesn't multiply
+  // the network cost.
   const imageBlobs = blobs.filter((b) => isImage(b.pathname));
   const thumbByFull = new Map<string, string>();
+  const bnwByFull = new Map<string, string>();
   for (const b of imageBlobs) {
     const filename = b.pathname.replace(BLOB_PREFIX, "");
     if (isThumb(filename)) {
       thumbByFull.set(thumbToFullName(filename), b.url);
+    } else if (isBnw(filename)) {
+      bnwByFull.set(bnwToFullName(filename), b.url);
     }
   }
   return imageBlobs
-    .filter((b) => !isThumb(b.pathname.replace(BLOB_PREFIX, "")))
+    .filter((b) => !isSidecar(b.pathname.replace(BLOB_PREFIX, "")))
     .map((b) => {
       const filename = b.pathname.replace(BLOB_PREFIX, "");
       const createdAt = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
@@ -173,6 +221,7 @@ async function listBlob(): Promise<StoredPoster[]> {
         id: filename,
         url: b.url,
         thumbUrl: thumbByFull.get(filename),
+        bnwUrl: bnwByFull.get(filename),
         createdAt,
       };
     })
@@ -199,15 +248,16 @@ async function saveBlob(filename: string, bytes: Buffer): Promise<StoredPoster> 
 async function deleteBlob(filename: string): Promise<void> {
   if (!isImage(filename)) throw new Error("არ არის პოსტერის ფაილი");
   const { del, list } = await import("@vercel/blob");
-  // Delete the full poster + its thumb sibling. Single list() call
-  // (with the shared timestamp prefix) finds both at once.
+  // Delete the full poster + every sidecar (thumb + bnw). Single
+  // list() call with the shared timestamp prefix finds all three.
   const stem = filename.replace(/\.[^.]+$/, "");
   const { blobs } = await list({ prefix: `${BLOB_PREFIX}${stem}` });
   const fullPath = `${BLOB_PREFIX}${filename}`;
   const thumbPath = `${BLOB_PREFIX}${fullToThumbName(filename)}`;
+  const bnwPath = `${BLOB_PREFIX}${fullToBnwName(filename)}`;
   const urlsToDelete: string[] = [];
   for (const b of blobs) {
-    if (b.pathname === fullPath || b.pathname === thumbPath) {
+    if (b.pathname === fullPath || b.pathname === thumbPath || b.pathname === bnwPath) {
       urlsToDelete.push(b.url);
     }
   }
@@ -235,6 +285,12 @@ export function newPosterFilename(ext: string = ".jpg"): string {
  *  poster_X_y.jpg → poster_X_y_thumb.jpg. */
 export function thumbFilenameFor(fullFilename: string): string {
   return fullToThumbName(fullFilename);
+}
+
+/** Derive the B&W partner filename from a full-poster filename.
+ *  poster_X_y.jpg → poster_X_y_bnw.jpg. */
+export function bnwFilenameFor(fullFilename: string): string {
+  return fullToBnwName(fullFilename);
 }
 
 async function _listPosters(): Promise<StoredPoster[]> {

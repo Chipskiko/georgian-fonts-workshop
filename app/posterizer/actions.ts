@@ -7,12 +7,17 @@ import {
   deletePoster as storageDelete,
   newPosterFilename,
   thumbFilenameFor,
+  bnwFilenameFor,
   type StoredPoster,
 } from "@/lib/poster-storage";
 import { passwordsMatch } from "@/lib/auth";
 
 const MAX_BYTES = 4 * 1024 * 1024; // 4 MB — generous for an A4 image at 2x
 const MAX_THUMB_BYTES = 512 * 1024; // 0.5 MB — thumbs should be << 100KB
+// B&W partner is full-resolution grayscale of the same poster — gets
+// the same upper bound as the color file. (Grayscale JPEGs are usually
+// smaller, but a heavy-pencil poster could approach the same size.)
+const MAX_BNW_BYTES = MAX_BYTES;
 const ALLOWED_MIMES = new Set(["image/png", "image/jpeg"]);
 
 /** Upload a poster (JPEG or PNG) + optional thumbnail. Called from
@@ -52,6 +57,23 @@ export async function uploadPoster(
         await storageSave(thumbName, thumbBuf);
       } catch {
         // ok — gallery handles missing thumb.
+      }
+    }
+  }
+
+  // Optional B&W partner — grayscale variant cascade pre-computes at
+  // save time so gallery downloads can be instant fetches (no per-click
+  // canvas conversion). Same best-effort pattern as thumb: missing
+  // partner → gallery's legacy fallback does on-the-fly conversion.
+  const bnw = formData.get("bnw");
+  if (bnw instanceof File && bnw.size > 0 && bnw.size <= MAX_BNW_BYTES) {
+    if (!bnw.type || ALLOWED_MIMES.has(bnw.type)) {
+      const bnwName = bnwFilenameFor(filename);
+      const bnwBuf = Buffer.from(await bnw.arrayBuffer());
+      try {
+        await storageSave(bnwName, bnwBuf);
+      } catch {
+        // ok — gallery handles missing bnw via legacy conversion path.
       }
     }
   }
