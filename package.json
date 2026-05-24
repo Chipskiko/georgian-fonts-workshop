@@ -14,6 +14,7 @@
     "@vercel/blob": "^2.3.3",
     "html2canvas-pro": "^2.0.2",
     "jscanify": "^1.4.2",
+    "jszip": "^3.10.1",
     "matter-js": "^0.20.0",
     "next": "16.2.6",
     "opentype.js": "^2.0.0",

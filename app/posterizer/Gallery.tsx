@@ -10,36 +10,40 @@ import { useAdmin } from "../add/useAdmin";
 // manual refresh button covers the "I want to see new posters NOW" case.
 const POLL_INTERVAL_MS = 30_000;
 
-/** Fetch the original color poster, render it through a grayscale-
- *  conversion canvas, and trigger a download. Doesn't hit the server —
- *  saves bandwidth + Vercel function invocations. Falls back to opening
- *  the color poster in a new tab if canvas conversion fails (CORS, etc).
- */
+/** Fetch a color poster URL and return its grayscale-converted JPEG
+ *  blob. Used by both the per-tile B&W download and the batch
+ *  "download all" zip. Luminance-weighted (Rec. 709) so perceived
+ *  brightness matches the human eye instead of a flat 1/3-1/3-1/3
+ *  average which crushes warm colors. */
+async function fetchAndConvertToBnw(url: string): Promise<Blob> {
+  const res = await fetch(url, { mode: "cors" });
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  const c = document.createElement("canvas");
+  c.width = bitmap.width;
+  c.height = bitmap.height;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("no 2d ctx");
+  ctx.drawImage(bitmap, 0, 0);
+  const imgData = ctx.getImageData(0, 0, c.width, c.height);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+    d[i] = y; d[i + 1] = y; d[i + 2] = y;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const out: Blob | null = await new Promise((res) =>
+    c.toBlob(res, "image/jpeg", 0.92),
+  );
+  if (!out) throw new Error("toBlob failed");
+  return out;
+}
+
+/** Per-tile B&W download trigger. Doesn't hit the server. Falls back
+ *  to opening the color version in a new tab on conversion failure. */
 async function downloadBnw(url: string, id: string): Promise<void> {
   try {
-    const res = await fetch(url, { mode: "cors" });
-    const blob = await res.blob();
-    const bitmap = await createImageBitmap(blob);
-    const c = document.createElement("canvas");
-    c.width = bitmap.width;
-    c.height = bitmap.height;
-    const ctx = c.getContext("2d");
-    if (!ctx) throw new Error("no 2d ctx");
-    // Grayscale conversion: luminance-weighted (Rec. 709) so the
-    // perceived brightness matches what the eye sees, instead of a
-    // flat 1/3-1/3-1/3 average which crushes warm colors.
-    ctx.drawImage(bitmap, 0, 0);
-    const imgData = ctx.getImageData(0, 0, c.width, c.height);
-    const d = imgData.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const y = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
-      d[i] = y; d[i + 1] = y; d[i + 2] = y;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    const outBlob: Blob | null = await new Promise((res) =>
-      c.toBlob(res, "image/jpeg", 0.92),
-    );
-    if (!outBlob) throw new Error("toBlob failed");
+    const outBlob = await fetchAndConvertToBnw(url);
     const downloadUrl = URL.createObjectURL(outBlob);
     const a = document.createElement("a");
     a.href = downloadUrl;
@@ -56,6 +60,48 @@ async function downloadBnw(url: string, id: string): Promise<void> {
   }
 }
 
+/** Batch: B&W-convert every poster and zip them into one download.
+ *  Pure client-side — fetches the originals (CORS-friendly Vercel Blob
+ *  URLs), converts, packages with JSZip. No server invocation cost.
+ *  For a workshop with 30 posters at ~150KB each the zip is ~5MB and
+ *  the whole roundtrip takes ~10-30 sec depending on network. */
+async function downloadAllBnwZip(
+  posters: StoredPoster[],
+  onProgress: (done: number, total: number) => void,
+): Promise<void> {
+  // Dynamic import to keep JSZip out of the initial gallery bundle —
+  // it's only fetched when the user actually clicks "download all".
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+  onProgress(0, posters.length);
+  // Sequential rather than Promise.all so a 30-poster workshop doesn't
+  // open 30 concurrent fetches (which throttles aggressively on Safari
+  // and triggers Vercel Blob's per-IP burst limits).
+  for (let i = 0; i < posters.length; i++) {
+    const p = posters[i];
+    try {
+      const bnwBlob = await fetchAndConvertToBnw(p.url);
+      const name = p.id.replace(/(\.[^.]+)$/, "_bnw$1");
+      zip.file(name, bnwBlob);
+    } catch (e) {
+      console.warn(`[downloadAllBnwZip] skipping ${p.id}:`, e);
+    }
+    onProgress(i + 1, posters.length);
+  }
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement("a");
+  a.href = url;
+  // Stamped filename so successive downloads don't clobber each other
+  // in the user's Downloads folder.
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  a.download = `posters-bnw-${ts}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) {
   const [posters, setPosters] = useState<StoredPoster[]>(initialPosters);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
@@ -63,6 +109,9 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Bulk B&W download state. `bnwProgress` is null when idle, otherwise
+  // `{ done, total }` so the button label can show "5/30" mid-zip.
+  const [bnwProgress, setBnwProgress] = useState<{ done: number; total: number } | null>(null);
   const { unlocked, password } = useAdmin();
 
   // Background poll for new posters so participants see each other's
@@ -97,6 +146,22 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
       setRefreshing(false);
     }
   }, [refreshing]);
+
+  /** Batch-download all posters as a B&W zip. Click → fetches each
+   *  poster, converts to grayscale on a canvas, zips them all, triggers
+   *  a single download. Sequential fetches (not parallel) to be polite
+   *  to Vercel Blob's per-IP rate limits. */
+  const handleDownloadAllBnw = useCallback(async () => {
+    if (bnwProgress !== null || posters.length === 0) return;
+    setErrMsg(null);
+    try {
+      await downloadAllBnwZip(posters, (done, total) => setBnwProgress({ done, total }));
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : "ჩამოტვირთვა ვერ მოხერხდა");
+    } finally {
+      setBnwProgress(null);
+    }
+  }, [posters, bnwProgress]);
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -135,6 +200,18 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
           rather than waiting for the 30s background poll. */}
       {posters.length > 0 ? (
         <div className="gallery-header">
+          <button
+            type="button"
+            className="gallery-refresh-btn"
+            onClick={() => void handleDownloadAllBnw()}
+            disabled={bnwProgress !== null}
+            aria-label="download all posters as black-and-white zip"
+            title="download all posters as black-and-white zip"
+          >
+            {bnwProgress !== null
+              ? `↓ შ/თ ${bnwProgress.done}/${bnwProgress.total}`
+              : "↓ ყველა შ/თ"}
+          </button>
           <button
             type="button"
             className="gallery-refresh-btn"
