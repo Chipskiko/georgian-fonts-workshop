@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
@@ -19,6 +19,11 @@ export type StoredFont = {
   publicUrl: string;
   /** Bytes for downstream use (e.g. embedding into SVG); lazy-fetched on demand. */
   fetchBytes: () => Promise<Uint8Array>;
+  /** Epoch ms when the font was uploaded — mtimeMs for FS storage,
+   *  uploadedAt for Vercel Blob. Used by the home-page font list to
+   *  sort newest-first so workshop participants see their own upload
+   *  at the top instead of scrolling past alphabetically-earlier fonts. */
+  createdAt: number;
 };
 
 const ALLOWED_EXT = new Set([".ttf", ".otf", ".woff", ".woff2"]);
@@ -61,10 +66,20 @@ function listFs(): StoredFont[] {
     if (!e.isFile()) continue;
     const ext = path.extname(e.name).toLowerCase();
     if (!ALLOWED_EXT.has(ext)) continue;
+    // mtimeMs as a proxy for "uploaded-at" in FS mode — the file
+    // gets written once at save time and never modified, so mtime
+    // tracks the upload event well enough for newest-first sorting.
+    let createdAt = 0;
+    try {
+      createdAt = statSync(path.join(FONT_DIR_FS, e.name)).mtimeMs;
+    } catch {
+      /* unreadable file — leave at 0, will sort to bottom */
+    }
     out.push({
       filename: e.name,
       publicUrl: `/fonts/${encodeURIComponent(e.name)}`,
       fetchBytes: async () => new Uint8Array(readFileSync(path.join(FONT_DIR_FS, e.name))),
+      createdAt,
     });
   }
   return out;
@@ -89,6 +104,10 @@ async function saveFs(filename: string, bytes: Uint8Array | Buffer): Promise<Sto
     filename: unique,
     publicUrl: `/fonts/${encodeURIComponent(unique)}`,
     fetchBytes: async () => new Uint8Array(readFileSync(dest)),
+    // Just-written = now. The next listFs() call will read mtimeMs;
+    // returning Date.now() here keeps the returned StoredFont
+    // consistent for any immediate consumer.
+    createdAt: Date.now(),
   };
 }
 
@@ -130,6 +149,11 @@ async function listBlob(): Promise<StoredFont[]> {
           const r = await fetch(b.url);
           return new Uint8Array(await r.arrayBuffer());
         },
+        // Vercel Blob's uploadedAt is an ISO string; parse to epoch ms
+        // for consistency with the FS adapter (which uses mtimeMs).
+        // Falls back to 0 for legacy blobs that somehow lack the field
+        // — they sort to the bottom, which is correct (treat as ancient).
+        createdAt: b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0,
       };
     });
 }
@@ -151,6 +175,9 @@ async function saveBlob(filename: string, bytes: Uint8Array | Buffer): Promise<S
       const r = await fetch(blob.url);
       return new Uint8Array(await r.arrayBuffer());
     },
+    // Just-uploaded = now. The next listBlob() call will read
+    // uploadedAt from the Blob metadata.
+    createdAt: Date.now(),
   };
 }
 

@@ -34,7 +34,10 @@ function toName(filename: string): { name: string; designer?: string } {
  *  callers in server components get a cached result. */
 async function _getFonts(): Promise<FontEntry[]> {
   const stored = await listFonts();
-  const fonts: FontEntry[] = [];
+  // Carry createdAt alongside the FontEntry just inside this function
+  // (don't leak it through the public type — callers only need name +
+  // file). Used for the newest-first sort at the bottom of the body.
+  const fonts: (FontEntry & { _createdAt: number })[] = [];
   for (const s of stored) {
     const ext = path.extname(s.filename).toLowerCase();
     const format = EXT_TO_FORMAT[ext];
@@ -48,6 +51,7 @@ async function _getFonts(): Promise<FontEntry[]> {
       file: s.publicUrl,
       filename: s.filename,
       format,
+      _createdAt: s.createdAt,
     });
   }
   // Disambiguate identical display names. When two workshop participants
@@ -72,7 +76,17 @@ async function _getFonts(): Promise<FontEntry[]> {
       list[i].name = `${list[i].name} (${i + 1})`;
     }
   }
-  return fonts.sort((a, b) => a.name.localeCompare(b.name));
+  // NEWEST-FIRST: workshop participants should see their fresh upload
+  // at the top of every consumer of this list (home-page font specimens,
+  // /add page, cascade picker). Sort by _createdAt descending — ties
+  // (same millisecond) fall back to filename for stable ordering across
+  // renders. Strip the internal _createdAt before returning so the
+  // FontEntry shape stays stable for downstream consumers.
+  fonts.sort((a, b) => {
+    if (b._createdAt !== a._createdAt) return b._createdAt - a._createdAt;
+    return a.filename.localeCompare(b.filename);
+  });
+  return fonts.map(({ _createdAt: _unused, ...rest }) => rest);
 }
 
 // Cache the font list at the function level. Every page that calls
