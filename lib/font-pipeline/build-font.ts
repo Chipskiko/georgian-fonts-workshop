@@ -120,6 +120,30 @@ export function buildFont(
     );
   }
 
+  // Derive an ASCII-safe internal name BEFORE constructing the font.
+  // opentype.js bakes whatever we pass as `familyName` into BOTH the
+  // CFF Name INDEX FontName AND the name table's Name ID 6
+  // (postScriptName) — and the OpenType spec requires both to be ASCII.
+  // If we passed the raw Georgian familyName, Chrome/Edge's OTS
+  // sanitizer would reject the font (CoreText is lenient and accepts
+  // it, which is why iPhone worked but Chrome silently fell back to a
+  // system font).
+  //
+  // Transliteration order:
+  //   1. transliterateGeorgian — readable BGN-style ASCII for Georgian.
+  //      "ორნამენტიკა" → "ornamenTika".
+  //   2. stripToAscii fallback — for mixed scripts that have at least
+  //      some plain-ASCII letters in them.
+  //   3. "GeorgianWorkshopFont" — last-resort generic name; never
+  //      hits this path with the transliterator covering all Mkhedruli.
+  //
+  // The user-visible display name (Name ID 1 / Name ID 4) is restored
+  // to the original Georgian string further down, so the font picker
+  // still shows what the participant typed.
+  const asciiBase = transliterateGeorgian(meta.familyName)
+    || stripToAscii(meta.familyName)
+    || "GeorgianWorkshopFont";
+
   // opentype.js's TypeScript declarations are incomplete: weightClass
   // is typed as string but the OS/2 writer reads it as a number, and
   // panose is not declared at all but IS read at runtime (see
@@ -127,7 +151,10 @@ export function buildFont(
   // pass the runtime-correct shape.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fontOptions: any = {
-    familyName: meta.familyName,
+    // ASCII internal name — drives CFF FontName + Name ID 6
+    // (postScriptName). Display names get reverted to Georgian
+    // post-construction (see below).
+    familyName: asciiBase,
     styleName: "Regular",
     designer: meta.designerName ?? "Workshop",
     unitsPerEm: UNITS_PER_EM,
@@ -197,45 +224,26 @@ export function buildFont(
     tables.os2.usWinDescent = -DESCENDER;
   }
 
-  // CRITICAL: backfill the Macintosh name table with ASCII-safe entries.
+  // Macintosh table backfill. opentype.js writes name records for
+  // three platforms — Unicode, Windows (UTF-16), Macintosh (Mac
+  // Roman). Mac Roman is a 256-char Latin set with NO Georgian, so
+  // for a Georgian-named font opentype.js silently OMITS the mac
+  // entries rather than transliterating. CoreText reads the
+  // Macintosh table during font registration; without entries there
+  // it refuses to register the font and the @font-face falls back to
+  // Times. Populate mac entries with an ASCII transliteration.
   //
-  // opentype.js writes name records for three platforms — Unicode,
-  // Windows (UTF-16), Macintosh (Mac Roman). Mac Roman is a 256-char
-  // Latin set with NO Georgian (or anything outside Latin-1 + a few
-  // extras). When the family name can't be encoded in Mac Roman,
-  // opentype.js silently OMITS the entry rather than transliterating.
-  //
-  // CoreText (the font loader on macOS + iOS Safari + Chrome on Mac)
-  // reads the Macintosh table during font registration. With no
-  // fontFamily / fullName / postScriptName there, it refuses to register
-  // the font — the @font-face declaration looks valid, the URL responds
-  // 200 with the right Content-Type, but the browser falls back to
-  // Times. Latin-named fonts (like "Xara1") work because their Mac
-  // table is complete; Georgian-named fonts silently fail.
-  //
-  // Fix: populate Mac entries with an ASCII transliteration. The Unicode
-  // + Windows tables keep the Georgian name (what the OS shows when the
-  // font is installed); Mac entries just need to exist so CoreText
-  // accepts the font for web use.
-  //
-  // CRITICAL: append a short random tag to the Mac names so multiple
-  // Georgian-named fonts don't collide on the same fallback name. The
-  // PostScript name field is REQUIRED to be globally unique per the
-  // OpenType spec — when two installed fonts share one, CoreText
-  // registers only the first and the second silently fails to render.
-  // This is the bug that caused the second Georgian-named upload to
-  // fall back to Times on Safari/Chrome even after the c9d55df fix.
-  const asciiBase = stripToAscii(meta.familyName) || "GeorgianWorkshopFont";
-  // 6 chars from Math.random's base-36 string. 36^6 ≈ 2.1 billion, so
-  // the probability of two builds in the lifetime of the workshop
-  // generating the same tag is vanishingly small. This tag is internal-
-  // only — never displayed in the picker (the random suffix in the
-  // filename is stripped by toName() in lib/fonts.ts).
+  // The PostScript name field is REQUIRED to be globally unique per
+  // the OpenType spec — when two installed fonts share one, CoreText
+  // registers only the first and the second silently fails. Append a
+  // short random tag so multiple Georgian-named fonts don't collide.
+  // Pre-fix this tag was also the only ASCII identifier in the whole
+  // font (Name ID 6 + CFF FontName were both Georgian and got OTS-
+  // rejected by Chrome/Edge). Now `asciiBase` carries the readable
+  // transliteration into Name ID 6 + CFF, and the mac entries still
+  // get their random suffix for uniqueness across uploads.
   const macUnique = Math.random().toString(36).slice(2, 8).padStart(6, "0");
   const macFamily = `${asciiBase}-${macUnique}`;
-  // opentype.js's .names.macintosh is built lazily and may be missing
-  // entirely if no Mac-Roman-safe entries were generated. Ensure the
-  // object exists before assigning.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const names = font.names as any;
   names.macintosh = names.macintosh ?? {};
@@ -243,6 +251,33 @@ export function buildFont(
   names.macintosh.fullName = { en: `${macFamily} Regular` };
   names.macintosh.postScriptName = { en: `${macFamily}-Regular` };
   names.macintosh.uniqueID = { en: `: ${macFamily} Regular` };
+
+  // Restore the Georgian display name to the unicode + windows
+  // tables. opentype.js wrote `asciiBase` (the transliteration) into
+  // these because that's what we passed as `familyName` — but
+  // Name ID 1 (fontFamily) and Name ID 4 (fullName) are USER-VISIBLE
+  // labels, not internal identifiers. The spec allows non-ASCII here
+  // and OTS doesn't validate them strictly. Putting the original
+  // Georgian string back means font pickers / OS font menus / the
+  // workshop UI display the name the participant actually typed.
+  //
+  // Crucially we do NOT touch Name ID 6 (postScriptName) here — that
+  // stays as the ASCII transliteration so the font binary remains
+  // spec-compliant and OTS-acceptable. Same goes for the CFF Name
+  // INDEX FontName, which is baked at construction time from the
+  // constructor's `familyName` option (asciiBase) and not reachable
+  // through the name table after the fact.
+  if (meta.familyName !== asciiBase) {
+    const displayFullName = `${meta.familyName} Regular`;
+    names.unicode = names.unicode ?? {};
+    names.unicode.fontFamily = { en: meta.familyName };
+    names.unicode.fullName = { en: displayFullName };
+    names.unicode.preferredFamily = { en: meta.familyName };
+    names.windows = names.windows ?? {};
+    names.windows.fontFamily = { en: meta.familyName };
+    names.windows.fullName = { en: displayFullName };
+    names.windows.preferredFamily = { en: meta.familyName };
+  }
 
   const bytes = new Uint8Array(font.toArrayBuffer());
 
@@ -331,6 +366,53 @@ function stripToAscii(s: string): string {
     .replace(/[^\w-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * BGN-style transliteration of Mkhedruli Georgian → ASCII. Capital
+ * letters disambiguate the aspirated / ejective pairs (e.g. ტ→t,
+ * თ→T; პ→p, ფ→f; კ→k, ქ→q). Used to derive an ASCII PostScript /
+ * CFF FontName from a user-supplied Georgian family name so the
+ * resulting font binary satisfies the OpenType spec.
+ *
+ * Why this matters: Chrome/Edge's OTS (OpenType Sanitizer) enforces
+ * the spec requirement that Name ID 6 (postScriptName) and the CFF
+ * Name INDEX FontName be ASCII-only. Pre-fix, a Georgian-named upload
+ * baked the Georgian string into both → OTS rejected the font →
+ * Chrome silently fell back to the system Georgian font even though
+ * the .otf downloaded successfully. CoreText (Safari/iOS) is lenient
+ * and renders the font regardless, which is why phones looked fine.
+ *
+ * Strategy: use the transliteration ONLY for the spec-required
+ * internal identifiers (PostScript name + CFF FontName). The user-
+ * visible display names (Name ID 1 fontFamily, Name ID 4 fullName)
+ * in the unicode/windows name tables get overridden back to the
+ * original Georgian string so the workshop UI and font picker still
+ * show the actual name the participant typed.
+ *
+ * Mapping crib sheet (only the letters that aren't direct Latin):
+ *   თ→T  ჟ→J  ღ→R  ყ→y  შ→S  ჩ→C  ც→c  ძ→Z  წ→w  ჭ→W  ხ→x
+ */
+const GEORGIAN_TO_LATIN: Record<string, string> = {
+  ა: "a", ბ: "b", გ: "g", დ: "d", ე: "e",
+  ვ: "v", ზ: "z", თ: "T", ი: "i", კ: "k",
+  ლ: "l", მ: "m", ნ: "n", ო: "o", პ: "p",
+  ჟ: "J", რ: "r", ს: "s", ტ: "t", უ: "u",
+  ფ: "f", ქ: "q", ღ: "R", ყ: "y", შ: "S",
+  ჩ: "C", ც: "c", ძ: "Z", წ: "w", ჭ: "W",
+  ხ: "x", ჯ: "j", ჰ: "h",
+};
+
+function transliterateGeorgian(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    out += GEORGIAN_TO_LATIN[ch] ?? ch;
+  }
+  // Run the result through the ASCII stripper so any leftover non-
+  // Georgian non-ASCII characters (spaces, punctuation, latin accents
+  // someone might have mixed in) get normalized the same way as the
+  // pure-ASCII path.
+  return stripToAscii(out);
 }
 
 /**
