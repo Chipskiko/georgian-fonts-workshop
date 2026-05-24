@@ -156,20 +156,22 @@ for (const b of fonts) {
       continue;
     }
 
-    // Fix winding on every glyph and rebuild via the Path API.
-    // We rebuild each Glyph's .path with corrected commands so the
-    // re-encoder picks them up.
+    // Fix winding on every glyph. CRITICAL: read glyph.path directly
+    // — NOT glyph.getPath(). getPath() applies a -y flip to convert
+    // font's y-up coords to CSS y-down for display; assigning that
+    // result back to glyph.path stores it as y-up again (no
+    // un-flip), which double-flips and makes the font render
+    // upside-down. This was the original bug in this migration's
+    // first run; see scripts/rescue-font-flip.mjs for the recovery.
     let glyphsFixed = 0;
     for (let i = 0; i < font.glyphs.length; i++) {
       const g = font.glyphs.get(i);
-      const path = g.getPath(0, 0, font.unitsPerEm);
-      if (!path.commands?.length) continue;
+      const path = g.path;
+      if (!path?.commands?.length) continue;
       const fixed = fixGlyphWinding(path.commands);
-      // Build a new Path object with the fixed commands.
       const newPath = new opentype.Path();
       newPath.commands = fixed;
       g.path = newPath;
-      // Invalidate the cached glyph bytes so toArrayBuffer re-encodes.
       delete g._path;
       glyphsFixed++;
     }
