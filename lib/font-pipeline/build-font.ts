@@ -50,12 +50,17 @@ export function buildFont(
     path: new opentype.Path(),
   });
 
-  // Always include space (U+0020)
+  // Always include space (U+0020). Same explicit moveTo+close as the
+  // missing-letter glyphs below — empty Path() alone can render as
+  // .notdef on some FreeType configurations.
+  const spacePath = new opentype.Path();
+  spacePath.moveTo(0, 0);
+  spacePath.close();
   const space = new opentype.Glyph({
     name: "space",
     unicode: 0x0020,
     advanceWidth: 350,
-    path: new opentype.Path(),
+    path: spacePath,
   });
 
   const glyphs: opentype.Glyph[] = [notdef, space];
@@ -70,13 +75,28 @@ export function buildFont(
     const ch = ALPHABET[i];
 
     if (!drawn) {
-      // empty glyph for missing letters — keeps font set complete
+      // Empty glyph for missing letters — keeps the cmap complete so a
+      // participant who fills only 10 of 33 cells still gets a font
+      // they can type all alphabet keys into without hitting .notdef
+      // (which renders as a tofu box □ on Android Chrome / FreeType).
+      //
+      // We use the same "blank visible-area" pattern as the space
+      // glyph: a single moveTo at the origin so the CFF charstring
+      // has explicit operators (not just `endchar`). Empty Path()
+      // alone produces a bare-endchar charstring which SOME stricter
+      // renderers (notably older Android FreeType) treat as a missing
+      // glyph and substitute .notdef. moveTo+close yields a
+      // zero-ink-but-positively-defined charstring that every
+      // renderer accepts as a valid blank glyph.
+      const blank = new opentype.Path();
+      blank.moveTo(0, 0);
+      blank.close();
       glyphs.push(
         new opentype.Glyph({
           name: `u${codePoint.toString(16).toUpperCase()}`,
           unicode: codePoint,
           advanceWidth: 500,
-          path: new opentype.Path(),
+          path: blank,
         }),
       );
       continue;
@@ -150,7 +170,7 @@ export function buildFont(
   // expose constructor options for these fields. tables.os2 is read at
   // toArrayBuffer time, so the patches make it into the binary.
   // (panose is set via constructor option above; weightClass too.) The
-  // remaining 2 OS/2 fields aren't reachable through opentype.js's
+  // remaining 4 OS/2 fields aren't reachable through opentype.js's
   // constructor — patch tables.os2 directly. Verified to stick in the
   // output binary via post-build validation (validateFontBytes below).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,6 +179,22 @@ export function buildFont(
     tables.os2 = tables.os2 ?? {};
     tables.os2.fsSelection = 0x40 | 0x80; // REGULAR | USE_TYPO_METRICS
     tables.os2.achVendID = "WKSH";
+    // Pin Win metrics to match Typo metrics. Without this, opentype.js
+    // computes usWinAscent/usWinDescent from each glyph's actual ink
+    // bounding box, which produces inconsistent line-height behavior
+    // across browsers:
+    //   - macOS Safari + Chrome respect USE_TYPO_METRICS (set in
+    //     fsSelection above) → use Typo metrics → consistent
+    //   - Some older Android Chrome / WebView versions IGNORE the
+    //     USE_TYPO_METRICS bit and fall back to Win metrics → with
+    //     ink-derived defaults like 748/253, the line height is
+    //     2-3 units smaller than Typo's 750/250 → glyphs render at
+    //     slightly wrong vertical position
+    // Pinning to ASCENDER (750) / -DESCENDER (250) guarantees Win
+    // and Typo agree, so regardless of which metric a renderer picks,
+    // the result is identical.
+    tables.os2.usWinAscent = ASCENDER;
+    tables.os2.usWinDescent = -DESCENDER;
   }
 
   // CRITICAL: backfill the Macintosh name table with ASCII-safe entries.
@@ -274,6 +310,12 @@ function validateFontBytes(bytes: Uint8Array, familyName: string): void {
   }
   if (!(os2.fsSelection & 0x80)) {
     console.warn(`[buildFont] USE_TYPO_METRICS bit not set in fsSelection (${familyName})`);
+  }
+  if (os2.usWinAscent !== ASCENDER) {
+    console.warn(`[buildFont] usWinAscent=${os2.usWinAscent} expected ${ASCENDER} (${familyName})`);
+  }
+  if (os2.usWinDescent !== -DESCENDER) {
+    console.warn(`[buildFont] usWinDescent=${os2.usWinDescent} expected ${-DESCENDER} (${familyName})`);
   }
 }
 
