@@ -27,14 +27,29 @@ async function fetchAndConvertToBnw(url: string): Promise<Blob> {
   ctx.drawImage(bitmap, 0, 0);
   const imgData = ctx.getImageData(0, 0, c.width, c.height);
   const d = imgData.data;
+  // Legacy fallback: we don't know the original bg/fg the user
+  // picked (cascade saves them out-of-band into the _bnw partner,
+  // but old posters have no partner). Auto-detect the threshold
+  // DIRECTION from the image's mean luminance: if the image is
+  // mostly bright, the bg is light → standard threshold (dark → black,
+  // light → white). If mostly dark, the bg is dark → INVERT so the
+  // bg still maps to white.
+  //
+  // Threshold value (160) keeps things crisp around the midpoint.
+  // The direction flip is what makes "background → white, ink →
+  // black" work for any color palette.
+  let lumaSum = 0;
   for (let i = 0; i < d.length; i += 4) {
-    // Luminance (Rec. 709) → binary threshold at 160. Same formula
-    // as the cascade's save-time bnw generation; keeps the legacy
-    // fallback consistent with the pre-computed bnw output. Without
-    // the threshold the output is pure grayscale with a grey cast
-    // that doesn't reproduce cleanly through RISO printing.
+    lumaSum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+  }
+  const meanLuma = lumaSum / (d.length / 4);
+  const darkBg = meanLuma < 128;
+
+  for (let i = 0; i < d.length; i += 4) {
     const y = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-    const bw = y < 160 ? 0 : 255;
+    // darkBg branch flips the comparison so the (dark) bg → white
+    // and the (light) ink → black.
+    const bw = darkBg ? (y > 160 ? 0 : 255) : (y < 160 ? 0 : 255);
     d[i] = bw; d[i + 1] = bw; d[i + 2] = bw;
   }
   ctx.putImageData(imgData, 0, 0);

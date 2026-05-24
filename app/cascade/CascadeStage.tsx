@@ -124,6 +124,17 @@ function previewForFontName(name: string): string {
  *  hover via the row's title attribute. */
 const FONT_PREVIEW_TEXT = ALPHABET.join("");
 
+/** Parse a CSS hex color string ("#RRGGBB" or "RRGGBB") into a
+ *  3-tuple of 0-255 RGB components. Used by the bnw generator to
+ *  compare each pixel's distance to bg vs fg in RGB space. Defaults
+ *  to white on parse failure so a malformed input degrades to "fill
+ *  everything as background" rather than corrupting the B&W output. */
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return [255, 255, 255];
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
 type Letter = {
   id: number;
   body: Matter.Body;
@@ -608,16 +619,31 @@ export function CascadeStage({
           bctx.drawImage(canvas, 0, 0);
           const imgData = bctx.getImageData(0, 0, bnwCanvas.width, bnwCanvas.height);
           const d = imgData.data;
+          // SEMANTIC B&W: pick the closer of the two known poster
+          // colors per pixel. We know bg and fg exactly (user picked
+          // them in the controls), so distance comparison gives
+          // unambiguous mapping regardless of which color is light
+          // or dark:
+          //   - Closer to bg → 255 (white)
+          //   - Closer to fg → 0 (black)
+          // Earlier luminance-threshold approach only worked when bg
+          // was lighter than fg; flipped wrong on dark-bg/light-ink
+          // combos. This works for ANY user color pair.
+          //
+          // Pixels that match neither cleanly (canvas anti-aliasing,
+          // JPEG compression artifacts at letter edges) snap to
+          // whichever they're nearer — usually the bg, which produces
+          // the cleanest silhouette on the printed output.
+          const bgRgb = hexToRgb(bgRef.current);
+          const fgRgb = hexToRgb(fgRef.current);
           for (let i = 0; i < d.length; i += 4) {
-            // Luminance (Rec. 709) → binary threshold at 160. Without
-            // the threshold the output is true grayscale and pots /
-            // letters print with a grey cast through a RISO (which
-            // expects pure ink-or-no-ink). At 160:
-            //   - Yellow bg (luma ≈ 222) → 255 (white) ✓
-            //   - Pink ink (luma ≈ 79) → 0 (black) ✓
-            //   - White/black extremes pass through unchanged
-            const y = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-            const bw = y < 160 ? 0 : 255;
+            const dBg = Math.abs(d[i] - bgRgb[0])
+              + Math.abs(d[i + 1] - bgRgb[1])
+              + Math.abs(d[i + 2] - bgRgb[2]);
+            const dFg = Math.abs(d[i] - fgRgb[0])
+              + Math.abs(d[i + 1] - fgRgb[1])
+              + Math.abs(d[i + 2] - fgRgb[2]);
+            const bw = dBg <= dFg ? 255 : 0;
             d[i] = bw;
             d[i + 1] = bw;
             d[i + 2] = bw;
