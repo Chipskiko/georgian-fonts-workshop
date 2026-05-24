@@ -142,6 +142,11 @@ async function persistDebugImage(pngBase64: string): Promise<string> {
 }
 
 export async function debugScan(formData: FormData): Promise<DebugResult> {
+  // Heavily traced because production hits "Server Components render"
+  // errors that should be impossible given the outer try/catch — the
+  // stage markers narrow down WHERE the throw bypasses our handlers
+  // when reading Vercel function logs.
+  console.log("[debugScan] START");
   // Outermost try wraps the ENTIRE action body. Any uncaught throw past
   // this point — OOM in sharp, decode failure, response too large — gets
   // converted into a structured response so the client sees a real
@@ -157,54 +162,70 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
     // tripped, so swallow + log.
     try {
       const deleted = await sweepOldDebugImages();
-      if (deleted > 0) console.log(`[debugScan] swept ${deleted} stale debug image(s)`);
+      console.log(`[debugScan] sweep ok (deleted=${deleted})`);
     } catch (e) {
       console.warn("[debugScan] sweep failed (non-fatal):", e);
     }
 
     const file = formData.get("scan");
-    if (!(file instanceof File)) return { ok: false, message: "ფაილი არ არის" };
-    if (file.size === 0) return { ok: false, message: "ცარიელი ფაილი" };
+    if (!(file instanceof File)) {
+      console.log("[debugScan] EARLY-EXIT no file");
+      return { ok: false, message: "ფაილი არ არის" };
+    }
+    if (file.size === 0) {
+      console.log("[debugScan] EARLY-EXIT empty file");
+      return { ok: false, message: "ცარიელი ფაილი" };
+    }
     if (file.size > MAX_BYTES) {
+      console.log(`[debugScan] EARLY-EXIT file too big: ${file.size}`);
       return { ok: false, message: `ფაილი ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
     }
+    console.log(`[debugScan] file ok: ${file.size}b`);
 
     let buffer: Buffer;
     try {
       buffer = Buffer.from(await file.arrayBuffer());
+      console.log(`[debugScan] buffer ok: ${buffer.length}b`);
     } catch (e) {
       console.error("[debugScan] arrayBuffer failed:", e);
       return { ok: false, message: "ფაილის წაკითხვა ვერ მოხერხდა" };
     }
 
     try {
+      console.log("[debugScan] calling renderDebugOverlay");
       const overlay = await renderDebugOverlay(buffer);
+      console.log(`[debugScan] overlay ok: ${overlay.width}x${overlay.height} cells=${overlay.layout.cells.length} b64len=${overlay.pngBase64.length}`);
       // Push the rendered JPEG out-of-band so the RSC response carries
       // only a short URL string. Avoids the ~1MB streaming-payload
       // limit that surfaced as the generic "Server Components render"
       // error on high-res phone scans.
+      console.log("[debugScan] calling persistDebugImage");
       const url = await persistDebugImage(overlay.pngBase64);
-      return {
-        ok: true,
+      console.log(`[debugScan] persist ok: ${url}`);
+      const result = {
+        ok: true as const,
         url,
         width: overlay.width,
         height: overlay.height,
         cellCount: overlay.layout.cells.length,
       };
+      console.log("[debugScan] DONE ok");
+      return result;
     } catch (e) {
       const message = e instanceof Error ? e.message : "დებაგი ვერ შესრულდა";
-      console.error("[debugScan] renderDebugOverlay failed:", e);
+      console.error("[debugScan] renderDebugOverlay path failed:", e);
       // Try the detection-debug fallback. Render an annotated image
       // showing every candidate component the detector found, even
       // though the full pipeline couldn't complete.
       try {
+        console.log("[debugScan] calling renderDetectionDebug (fallback)");
         const fallback = await renderDetectionDebug(buffer);
-        // Same out-of-band trick as the success path — the old size
-        // guard becomes unnecessary since we're not returning base64
-        // through the RSC payload anymore.
+        console.log(`[debugScan] fallback ok: ${fallback.width}x${fallback.height} b64len=${fallback.pngBase64.length}`);
+        console.log("[debugScan] persisting fallback image");
         const fallbackUrl = await persistDebugImage(fallback.pngBase64);
-        return {
-          ok: false,
+        console.log(`[debugScan] fallback persist ok: ${fallbackUrl}`);
+        const result = {
+          ok: false as const,
           message,
           fallback: {
             url: fallbackUrl,
@@ -214,8 +235,11 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
             thresholdUsed: fallback.thresholdUsed,
           },
         };
+        console.log("[debugScan] DONE fallback");
+        return result;
       } catch (fbErr) {
         console.error("[debugScan] renderDetectionDebug failed:", fbErr);
+        console.log("[debugScan] DONE message-only");
         return { ok: false, message };
       }
     }
@@ -224,7 +248,7 @@ export async function debugScan(formData: FormData): Promise<DebugResult> {
     // weren't expecting (likely OOM, function timeout, or a sharp
     // libvips abort). Surface a structured response so the client
     // doesn't see Next's generic error wrapper.
-    console.error("[debugScan] top-level catch:", top);
+    console.error("[debugScan] TOP-LEVEL CATCH:", top);
     const msg = top instanceof Error ? top.message : "უცნობი შეცდომა";
     return { ok: false, message: `დებაგი ჩავარდა: ${msg}` };
   }
