@@ -718,36 +718,65 @@ export function CascadeStage({
   // handlePointerDown uses an estimate that's often off for varied
   // Georgian fonts; this layout effect is the authoritative clamp.
   useLayoutEffect(() => {
-    const ids = newlyPlacedTextBoxIdsRef.current;
-    if (ids.size === 0) return;
+    // Iterate ALL textboxes (not just newly-placed) so edits that
+    // extend the text past canvas bounds also get clamped/shrunk.
+    // The newly-placed ref isn't read anymore — it's left around as
+    // a no-op so future logic can hook in if needed. The effect
+    // terminates: once a box fits, the shrink branch doesn't fire,
+    // adjustments map is empty, setTextBoxes isn't called, no re-
+    // render → no loop.
+    if (textBoxes.length === 0) return;
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
     const scale = rect.width / A4_WIDTH;
     if (!(scale > 0)) return;
-    const adjustments = new Map<number, { x: number; y: number }>();
-    for (const id of ids) {
-      const el = textBoxElemsRef.current.get(id);
+    const limitW = A4_WIDTH - 8;
+    const adjustments = new Map<number, { x: number; y: number; fontSize?: number }>();
+    for (const box of textBoxes) {
+      const el = textBoxElemsRef.current.get(box.id);
       if (!el) continue;
       const br = el.getBoundingClientRect();
       const bw = br.width / scale;
       const bh = br.height / scale;
-      const box = textBoxes.find((b) => b.id === id);
-      if (!box) {
-        ids.delete(id);
-        continue;
+      let nextX = box.x;
+      let nextY = box.y;
+      let nextFontSize = box.fontSize;
+      if (bw > limitW) {
+        // Text wider than canvas. Shrink fontSize so it fits, with a
+        // 0.9 buffer because fontSize→width isn't perfectly linear
+        // for all Georgian display fonts. Pin x to 0 since the
+        // shrunken box should span (nearly) the full width.
+        const shrinkRatio = (limitW / bw) * 0.9;
+        nextFontSize = Math.max(12, Math.floor(box.fontSize * shrinkRatio));
+        nextX = 0;
+        const estH = bh * (nextFontSize / box.fontSize);
+        nextY = Math.max(0, Math.min(A4_HEIGHT - estH, box.y));
+      } else {
+        nextX = Math.max(0, Math.min(A4_WIDTH - bw, box.x));
+        nextY = Math.max(0, Math.min(A4_HEIGHT - bh, box.y));
       }
-      const newX = Math.max(0, Math.min(A4_WIDTH - bw, box.x));
-      const newY = Math.max(0, Math.min(A4_HEIGHT - bh, box.y));
-      if (newX !== box.x || newY !== box.y) {
-        adjustments.set(id, { x: newX, y: newY });
+      const sameX = nextX === box.x;
+      const sameY = nextY === box.y;
+      const sameSize = nextFontSize === box.fontSize;
+      if (!sameX || !sameY || !sameSize) {
+        adjustments.set(box.id, {
+          x: nextX,
+          y: nextY,
+          ...(sameSize ? {} : { fontSize: nextFontSize }),
+        });
       }
-      ids.delete(id);
     }
     if (adjustments.size > 0) {
       setTextBoxes((cur) =>
         cur.map((b) => {
           const a = adjustments.get(b.id);
-          return a ? { ...b, x: a.x, y: a.y } : b;
+          if (!a) return b;
+          return {
+            ...b,
+            x: a.x,
+            y: a.y,
+            ...(a.fontSize !== undefined ? { fontSize: a.fontSize } : {}),
+          };
         }),
       );
     }
