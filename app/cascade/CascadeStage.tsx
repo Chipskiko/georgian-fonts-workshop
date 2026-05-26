@@ -78,6 +78,9 @@ type TextBox = {
    *  can place several boxes at consistent sizes; future iteration
    *  could add resize handles. */
   fontSize: number;
+  /** Rotation in radians around the box's center. The rotate handle
+   *  drags this; default 0 = upright. */
+  rotation: number;
 };
 
 // Default poster colors match the workshop's two-color palette
@@ -335,6 +338,10 @@ export function CascadeStage({
   >(null);
   const textBoxIdRef = useRef(0);
   const pendingInputRef = useRef<HTMLInputElement | null>(null);
+  // Currently-selected textbox id — when non-null AND tool === "move",
+  // the selection overlay (dashed bbox + rotate handle) renders around it.
+  // Mirrors the selectedLetterId pattern for parity with letters.
+  const [selectedTextBoxId, setSelectedTextBoxId] = useState<number | null>(null);
   // TextBox drag state — analogous to dragRef for letters. Stored
   // in a ref so the document-level pointer-move handler doesn't pay
   // re-render cost while dragging.
@@ -343,6 +350,22 @@ export function CascadeStage({
     offsetX: number;
     offsetY: number;
   }>({ id: null, offsetX: 0, offsetY: 0 });
+  // TextBox rotation state — analogous to rotateHandleRef for letters.
+  // Snapshots the box's pre-rotation angle + the pointer's initial
+  // angle from box center; pointer move computes delta from these.
+  const textBoxRotateRef = useRef<{
+    id: number | null;
+    centerX: number;
+    centerY: number;
+    initialPointerAngle: number;
+    initialBoxRotation: number;
+  }>({ id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 });
+  // DOM ref map for textbox span elements — lets us read each box's
+  // axis-aligned bounding rect when starting a rotation gesture
+  // (we need the box's center in viewport coords to compute the
+  // pointer's angle relative to it). Populated via React's ref
+  // callback prop in the JSX below.
+  const textBoxElemsRef = useRef<Map<number, HTMLElement>>(new Map());
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   // Current pointer tool: move (drag/resize letters), pencil (draw lines),
   // eraser (delete letters + erase canvas pixels).
@@ -561,6 +584,7 @@ export function CascadeStage({
     setSelectedLetterId(null);
     setTextBoxes([]);
     setPendingTextBox(null);
+    setSelectedTextBoxId(null);
     setTick((n) => (n + 1) % 1_000_000);
   }
 
@@ -597,6 +621,9 @@ export function CascadeStage({
           fontId: pendingTextBox.fontId,
           color: pendingTextBox.color,
           fontSize: pendingTextBox.fontSize,
+          // Newly-placed boxes start upright; users rotate via the
+          // selection-overlay handle (rotate-textbox).
+          rotation: 0,
         },
       ]);
     }
@@ -822,6 +849,7 @@ export function CascadeStage({
       setSelectedLetterId(null);
       setTextBoxes([]);
       setPendingTextBox(null);
+      setSelectedTextBoxId(null);
       setSaveStatus("saved");
       setTick((n) => (n + 1) % 1_000_000);
       window.setTimeout(() => setSaveStatus("idle"), 5000);
@@ -1099,6 +1127,35 @@ export function CascadeStage({
     }
 
     if (tool === "move") {
+      // TEXTBOX ROTATE HANDLE: clicking on the yellow rotate-ball that
+      // orbits the selected textbox starts a rotation gesture. The
+      // handle has data-cascade-handle="rotate-textbox" + data-textbox-id
+      // so we can identify both the gesture type and which box.
+      const rotTarget = (e.target as HTMLElement | null);
+      if (rotTarget?.dataset?.cascadeHandle === "rotate-textbox") {
+        const id = Number(rotTarget.dataset.textboxId);
+        const box = textBoxes.find((b) => b.id === id);
+        const el = textBoxElemsRef.current.get(id);
+        if (box && el) {
+          e.preventDefault();
+          safeCapture(e);
+          // The textbox span has transform-origin: center (CSS default)
+          // so its viewport-axis-aligned bbox center IS the rotation
+          // pivot regardless of current rotation angle. Use it as the
+          // anchor for computing pointer angles below.
+          const r = el.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          textBoxRotateRef.current = {
+            id,
+            centerX: cx,
+            centerY: cy,
+            initialPointerAngle: Math.atan2(e.clientY - cy, e.clientX - cx),
+            initialBoxRotation: box.rotation,
+          };
+          return;
+        }
+      }
       // TEXTBOX DRAG: clicking on a textbox in move mode picks it up
       // for drag. The textbox <div> has data-textbox-id="N" so we can
       // identify the hit target without geometric hit-testing.
@@ -1109,6 +1166,12 @@ export function CascadeStage({
         if (box) {
           e.preventDefault();
           safeCapture(e);
+          // Select on click so the overlay (bbox + rotate handle)
+          // appears. Same UX as letters: tap to select + drag,
+          // tap empty space to deselect.
+          setSelectedTextBoxId(id);
+          // Clear letter selection so two overlays never show at once.
+          if (selectedLetterId !== null) setSelectedLetterId(null);
           const rect = stageRef.current?.getBoundingClientRect();
           if (rect) {
             const scale = rect.width / A4_WIDTH;
@@ -1169,8 +1232,11 @@ export function CascadeStage({
       }
       const hit = letterAt(p.x, p.y);
       if (!hit) {
-        // Tapped empty space → clear selection (overlay disappears).
+        // Tapped empty space → clear BOTH selections so neither
+        // overlay is left dangling. Symmetric with the textbox-drag
+        // branch above that clears letter selection on textbox-hit.
         if (selectedLetterId !== null) setSelectedLetterId(null);
+        if (selectedTextBoxId !== null) setSelectedTextBoxId(null);
         return;
       }
       e.preventDefault();
@@ -1178,6 +1244,10 @@ export function CascadeStage({
       // SHIFT+DRAG rotation (desktop fallback for the 2-finger gesture).
       // shiftKey is a no-op on touch devices (no shift on a soft kb), so
       // there's no conflict with the touch path.
+      // Selecting a letter clears any selected textbox so two
+      // overlays never show at once. Mirrors the textbox-drag
+      // branch above that clears letter selection on textbox-hit.
+      if (selectedTextBoxId !== null) setSelectedTextBoxId(null);
       if (e.shiftKey) {
         setSelectedLetterId(hit.id);
         shiftRotateRef.current = {
@@ -1234,6 +1304,19 @@ export function CascadeStage({
     // 2-finger gesture reads from this on each move.
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    }
+    // TEXTBOX ROTATE: highest precedence in move mode. Computes the
+    // delta between the initial pointer angle (snapshotted on handle
+    // pointerdown) and the current angle, applies to the snapshotted
+    // initial rotation. The box's CSS transform-origin is its center,
+    // so this delta directly maps to the visible rotation.
+    if (tool === "move" && textBoxRotateRef.current.id !== null) {
+      const r = textBoxRotateRef.current;
+      const cur = Math.atan2(e.clientY - r.centerY, e.clientX - r.centerX);
+      const newRot = r.initialBoxRotation + (cur - r.initialPointerAngle);
+      const id = r.id;
+      setTextBoxes((cs) => cs.map((b) => (b.id === id ? { ...b, rotation: newRot } : b)));
+      return;
     }
     // TEXTBOX DRAG: highest precedence in move mode so it doesn't
     // collide with letter-drag / rotation handlers below. Updates
@@ -1372,6 +1455,12 @@ export function CascadeStage({
     // Drop this pointer from the tracked set. Done BEFORE the move-tool
     // branch so the 2-finger exit logic sees the post-removal count.
     pointersRef.current.delete(e.pointerId);
+    // TEXTBOX ROTATE end: clear the rotation ref so subsequent
+    // pointer-moves don't accidentally continue rotating.
+    if (textBoxRotateRef.current.id !== null) {
+      textBoxRotateRef.current = { id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 };
+      return;
+    }
     // TEXTBOX DRAG end: clear the drag ref so subsequent letter-drag
     // doesn't reuse the offsets.
     if (textBoxDragRef.current.id !== null) {
@@ -1772,32 +1861,66 @@ export function CascadeStage({
               the hit target without geometric hit-testing. Cursor is
               move when the move tool is active (so users see it's
               draggable) and default otherwise. */}
-          {textBoxes.map((b) => (
-            <span
-              key={b.id}
-              data-textbox-id={b.id}
-              className="cascade-textbox"
-              style={{
-                position: "absolute",
-                left: `${b.x}px`,
-                top: `${b.y}px`,
-                color: b.color,
-                fontFamily: `"${b.fontId}", var(--ui-georgian)`,
-                fontSize: `${b.fontSize}px`,
-                lineHeight: 1,
-                whiteSpace: "pre",
-                userSelect: "none",
-                WebkitUserSelect: "none",
-                cursor: tool === "move" ? "move" : "default",
-                // pointer-events:auto so the move-tool can grab it; the
-                // stage's delegated pointerdown still fires via bubble.
-                pointerEvents: tool === "move" ? "auto" : "none",
-                touchAction: "none",
-              }}
-            >
-              {b.text}
-            </span>
-          ))}
+          {textBoxes.map((b) => {
+            const isSelected = tool === "move" && selectedTextBoxId === b.id;
+            return (
+              <span
+                key={b.id}
+                ref={(el) => {
+                  // Maintain the ref map so the rotate-handle's
+                  // pointerdown handler can read the box's viewport
+                  // bounding rect to find the rotation pivot center.
+                  if (el) textBoxElemsRef.current.set(b.id, el);
+                  else textBoxElemsRef.current.delete(b.id);
+                }}
+                data-textbox-id={b.id}
+                className={
+                  "cascade-textbox" +
+                  (isSelected ? " cascade-textbox-selected" : "")
+                }
+                style={{
+                  position: "absolute",
+                  left: `${b.x}px`,
+                  top: `${b.y}px`,
+                  color: b.color,
+                  fontFamily: `"${b.fontId}", var(--ui-georgian)`,
+                  fontSize: `${b.fontSize}px`,
+                  lineHeight: 1,
+                  whiteSpace: "pre",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  cursor: tool === "move" ? "move" : "default",
+                  // pointer-events:auto so the move-tool can grab it; the
+                  // stage's delegated pointerdown still fires via bubble.
+                  pointerEvents: tool === "move" ? "auto" : "none",
+                  touchAction: "none",
+                  // CSS transform: rotate around center (default
+                  // transform-origin = 50% 50%). Keeping origin centered
+                  // means the box's axis-aligned bbox center stays put
+                  // during rotation, which is what the rotate-gesture
+                  // math assumes.
+                  transform: `rotate(${b.rotation}rad)`,
+                }}
+                data-html2canvas-ignore-children="false"
+              >
+                {b.text}
+                {/* Rotation handle — orbits the box (because it's a
+                    child of the rotated span). Same data-html2canvas-
+                    ignore trick as the letter overlay so the yellow
+                    ball doesn't leak into the saved JPG. */}
+                {isSelected ? (
+                  <span
+                    className="cascade-textbox-rotate-handle"
+                    data-cascade-handle="rotate-textbox"
+                    data-textbox-id={b.id}
+                    data-html2canvas-ignore="true"
+                    aria-label="rotate text box"
+                    role="button"
+                  />
+                ) : null}
+              </span>
+            );
+          })}
           {/* Pending textbox input — only visible while the user is
               typing a brand-new box (right after clicking with the
               textbox tool). Commits on Enter or blur with non-empty

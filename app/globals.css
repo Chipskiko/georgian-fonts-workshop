@@ -1373,6 +1373,44 @@ p {
   font-family: var(--ui-georgian);
 }
 
+/* Selected textbox — dashed outline. Uses `currentColor` so the
+   outline inherits the textbox's text color (poster fg, NOT the
+   site UI fg). Without this, a yellow textbox on a yellow poster
+   bg would have a yellow outline = invisible. Same trick the
+   letter bbox uses. `outline` (not `border`) so it doesn't affect
+   layout; html2canvas's outline rasterization is unreliable so the
+   dashed line naturally doesn't leak into saved JPGs even without
+   the data-html2canvas-ignore attribute. */
+.cascade-textbox-selected {
+  outline: 1.5px dashed currentColor;
+  outline-offset: 2px;
+}
+
+/* Rotate-ball orbiting a selected textbox. Same visual style as
+   the letter rotate-handle (.cascade-rotate-handle) for UX parity:
+   currentColor disc with a dark border so it stays visible on any
+   bg (even if fg matches bg, the #111 border keeps it readable).
+   Positioned above the box; orbits as the parent rotates because
+   it's a child of the rotated span. */
+.cascade-textbox-rotate-handle {
+  position: absolute;
+  /* 28px above the top of the text box (offset from the outline). */
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #111;
+  background: currentColor;
+  border-radius: 50%;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+.cascade-textbox-rotate-handle:active {
+  cursor: grabbing;
+}
+
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions
    match the stage; the buffer is at print resolution so strokes stay
    crisp when html2canvas-pro scales the snapshot up ~6x. */
