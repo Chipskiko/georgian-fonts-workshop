@@ -1252,21 +1252,20 @@ export function CascadeStage({
     // 2-finger gesture detection below.
     pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
-    // TEXTBOX TOOL: clicking anywhere opens an input at the click
-    // position. The user types a word, presses Enter (or blurs) to
-    // commit, Escape to cancel. Resolved coordinates are stage-local
-    // (top-left = 0,0), matching how textBoxes are positioned.
+    // TEXTBOX TOOL: clicking anywhere INSTANTLY places a new textbox
+    // with a random 5-letter Georgian placeholder. The user can then
+    // switch to the move tool to drag/rotate/resize, or double-click
+    // the box in move mode to edit its text. Each canvas click in
+    // textbox mode places another box and selects it (deselecting the
+    // previous one). The placeholder gives immediate visual feedback
+    // — the user sees something the moment they click, instead of
+    // having to type+Enter to commit a hidden input.
     if (tool === "textbox") {
       const rect = stageRef.current?.getBoundingClientRect();
       if (!rect) return;
-      // BUG FIX: if there's already a pending input open, commit it
-      // FIRST before opening a new one at the new position. Without
-      // this React reuses the same DOM <input> element (no key prop)
-      // → the input just appears to "move" to the new position with
-      // the old text still in it, then on Enter the user's first
-      // text gets overwritten + lost. Snapshot the current value
-      // straight from the live input DOM via the ref so we capture
-      // whatever the user typed before clicking again.
+      // If a stale pending edit-input is open (from a dblclick mid-
+      // flight), commit it first so its content doesn't get lost when
+      // the user clicks elsewhere to place a new box.
       if (pendingTextBox && pendingInputRef.current) {
         commitPendingTextBox(pendingInputRef.current.value);
       }
@@ -1284,15 +1283,28 @@ export function CascadeStage({
         : allFonts.length > 0
           ? allFonts[Math.floor(Math.random() * allFonts.length)].id
           : "serif";
-      setPendingTextBox({
-        x, y, fontId,
-        color: fgRef.current,
-        fontSize: 64,
-        editingId: null,
-        initialText: "",
-      });
-      // Don't capture/preventDefault — let click-events propagate
-      // normally so the input that mounts can take focus.
+      // 5 random Mkhedruli letters (U+10D0–U+10F0, 33 chars). Gives
+      // immediate visual feedback so the user sees the box landed.
+      let placeholder = "";
+      for (let i = 0; i < 5; i++) {
+        placeholder += String.fromCharCode(0x10D0 + Math.floor(Math.random() * 33));
+      }
+      const newId = ++textBoxIdRef.current;
+      setTextBoxes((cur) => [
+        ...cur,
+        {
+          id: newId,
+          x, y,
+          text: placeholder,
+          fontId,
+          color: fgRef.current,
+          fontSize: 64,
+          rotation: 0,
+        },
+      ]);
+      setSelectedTextBoxId(newId);
+      // Clear letter selection so two overlays never show at once.
+      if (selectedLetterId !== null) setSelectedLetterId(null);
       return;
     }
 
@@ -2259,7 +2271,14 @@ export function CascadeStage({
             // pending input until commit. Otherwise we'd render the
             // box AND an input overlay on top of each other.
             if (pendingTextBox?.editingId === b.id) return null;
-            const isSelected = tool === "move" && selectedTextBoxId === b.id;
+            // Selection overlay is visible in BOTH move and textbox
+            // tools. In move mode the corners/halos are interactive
+            // (resize/rotate). In textbox mode they're visible but
+            // pointer-events:none (see styles below) so the next
+            // canvas click passes through to place another textbox.
+            const isSelected =
+              (tool === "move" || tool === "textbox") &&
+              selectedTextBoxId === b.id;
             return (
               <span
                 key={b.id}
@@ -2368,7 +2387,12 @@ export function CascadeStage({
                           height: "36px",
                           // Center the halo on the corner point.
                           transform: "translate(-50%, -50%)",
-                          pointerEvents: "auto",
+                          // In textbox tool the overlay is visible
+                          // for feedback but pointer-events:none so
+                          // the next canvas click passes through to
+                          // place another textbox. Move tool keeps
+                          // the auto pointer-events for rotate/resize.
+                          pointerEvents: tool === "move" ? "auto" : "none",
                           touchAction: "none",
                         }}
                       >
@@ -2402,7 +2426,10 @@ export function CascadeStage({
                             boxSizing: "border-box",
                             cursor: c.cursor,
                             transform: "translate(-50%, -50%)",
-                            pointerEvents: "auto",
+                            // Match the halo: interactive in move mode
+                            // only, so a click in textbox mode passes
+                            // through and places another box.
+                            pointerEvents: tool === "move" ? "auto" : "none",
                             touchAction: "none",
                           }}
                         />
