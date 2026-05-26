@@ -753,16 +753,20 @@ export function CascadeStage({
     }
   }, [textBoxes]);
 
-  // BUG FIX: switching to a non-textbox tool while a pending input
-  // is open used to leave the input visible AND lose the typed text
-  // (the rendered input element survives tool changes since it
-  // depends on pendingTextBox state, not on tool). Force-commit
-  // any pending input as soon as the user switches away. If they
-  // typed nothing, commitPendingTextBox cleans up silently; if they
-  // typed something, it gets placed at the click position they
-  // originally clicked.
+  // Force-commit any in-progress NEW textbox placement when the user
+  // switches away from the textbox tool. Only applies to legacy
+  // "new placement" pendings (editingId === null). Edit-mode pendings
+  // (opened via dblclick) must survive tool changes — in particular
+  // the dblclick-from-textbox flow auto-switches to move tool while
+  // opening an edit input; auto-committing it on that switch would
+  // unmount the input before the user can type.
   useEffect(() => {
-    if (tool !== "textbox" && pendingTextBox && pendingInputRef.current) {
+    if (
+      tool !== "textbox" &&
+      pendingTextBox &&
+      pendingTextBox.editingId === null &&
+      pendingInputRef.current
+    ) {
       commitPendingTextBox(pendingInputRef.current.value);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2382,13 +2386,27 @@ export function CascadeStage({
                   if (el) textBoxElemsRef.current.set(b.id, el);
                   else textBoxElemsRef.current.delete(b.id);
                 }}
+                // In textbox tool, stop the pointerdown from bubbling
+                // to the stage so clicking on an existing textbox
+                // SELECTS it instead of placing a new box on top of
+                // it. (In move mode the stage handler already owns
+                // selection via its textbox-drag branch.)
+                onPointerDown={(e) => {
+                  if (tool !== "textbox") return;
+                  e.stopPropagation();
+                  setSelectedTextBoxId(b.id);
+                  if (selectedLetterId !== null) setSelectedLetterId(null);
+                }}
                 onDoubleClick={(e) => {
-                  // Double-click in move mode = enter edit. Stop
-                  // propagation so it doesn't also trigger a 2nd
-                  // click → letter-deselect on the stage.
-                  if (tool !== "move") return;
+                  // Double-click in move mode = enter edit.
+                  // Double-click in textbox mode = auto-switch to
+                  // move + enter edit (matches user expectation that
+                  // the placeholder text is editable immediately
+                  // after placement without a manual tool switch).
+                  if (tool !== "move" && tool !== "textbox") return;
                   e.stopPropagation();
                   e.preventDefault();
+                  if (tool === "textbox") setTool("move");
                   handleStartEdit(b.id);
                 }}
                 data-textbox-id={b.id}
@@ -2408,9 +2426,16 @@ export function CascadeStage({
                   userSelect: "none",
                   WebkitUserSelect: "none",
                   cursor: tool === "move" ? "move" : "default",
-                  // pointer-events:auto so the move-tool can grab it; the
-                  // stage's delegated pointerdown still fires via bubble.
-                  pointerEvents: tool === "move" ? "auto" : "none",
+                  // pointer-events:auto in BOTH move and textbox tools
+                  // so the per-textbox handlers above (select on
+                  // pointerdown in textbox tool; dblclick to edit)
+                  // can fire. Stage's delegated pointerdown still
+                  // fires via bubble in move mode for drag setup; in
+                  // textbox mode the onPointerDown handler stops
+                  // propagation so clicks on existing boxes don't
+                  // also place new ones underneath.
+                  pointerEvents:
+                    tool === "move" || tool === "textbox" ? "auto" : "none",
                   touchAction: "none",
                   // CSS transform: rotate around center (default
                   // transform-origin = 50% 50%). Keeping origin centered
