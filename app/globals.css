@@ -1386,51 +1386,14 @@ p {
   outline-offset: 2px;
 }
 
-/* Rotate-ball orbiting a selected textbox. Same visual style as
-   the letter rotate-handle (.cascade-rotate-handle) for UX parity:
-   currentColor disc with a dark border so it stays visible on any
-   bg (even if fg matches bg, the #111 border keeps it readable).
-   Positioned above the box; orbits as the parent rotates because
-   it's a child of the rotated span. */
-.cascade-textbox-rotate-handle {
-  position: absolute;
-  /* 28px above the top of the text box (offset from the outline). */
-  top: -34px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid #111;
-  background: currentColor;
-  border-radius: 50%;
-  cursor: grab;
-  pointer-events: auto;
-  touch-action: none;
-}
-.cascade-textbox-rotate-handle:active {
-  cursor: grabbing;
-}
-
-/* Resize handle — bottom-right corner of the bbox. Drag away from
-   center to grow fontSize, toward center to shrink. Same border/
-   color pattern as the rotate ball but square so the user can
-   visually distinguish "rotation gesture" from "resize gesture". */
-.cascade-textbox-resize-handle {
-  position: absolute;
-  bottom: -8px;
-  right: -8px;
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid #111;
-  background: currentColor;
-  cursor: nwse-resize;
-  pointer-events: auto;
-  touch-action: none;
-}
-
 /* Delete badge — small × at top-right of the bbox. Tap removes
    just this textbox. Same Backspace shortcut handles the same job
-   for desktop, this is the touch-reachable equivalent. */
+   for desktop, this is the touch-reachable equivalent.
+
+   z-index:2 puts it ABOVE the top-right corner halo (which has
+   pointer-events:auto for the hover-rotate gesture). Without this,
+   the halo would intercept clicks meant for the delete badge since
+   they geometrically overlap. */
 .cascade-textbox-delete-badge {
   position: absolute;
   top: -12px;
@@ -1454,6 +1417,7 @@ p {
   /* Slight font weight so the × is visually weighty enough at small
      size — otherwise it gets lost against the badge background. */
   font-weight: 700;
+  z-index: 2;
 }
 .cascade-textbox-delete-badge:hover {
   background: #111;

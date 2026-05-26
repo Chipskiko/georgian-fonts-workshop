@@ -387,6 +387,25 @@ export function CascadeStage({
     initialDist: number;
     initialFontSize: number;
   }>({ id: null, centerX: 0, centerY: 0, initialDist: 1, initialFontSize: 12 });
+  // TextBox two-finger pinch + rotate state — parity with the letter
+  // twoFingerRef. Snapshots initial pointers' angle + distance + the
+  // box's pre-gesture rotation + fontSize so move events compute deltas
+  // against a stable baseline.
+  const textBoxTwoFingerRef = useRef<{
+    active: boolean;
+    id: number | null;
+    initialPointersAngle: number;
+    initialBoxRotation: number;
+    initialPointersDist: number;
+    initialFontSize: number;
+  }>({
+    active: false,
+    id: null,
+    initialPointersAngle: 0,
+    initialBoxRotation: 0,
+    initialPointersDist: 1,
+    initialFontSize: 64,
+  });
   // DOM ref map for textbox span elements — lets us read each box's
   // axis-aligned bounding rect when starting a rotation gesture
   // (we need the box's center in viewport coords to compute the
@@ -594,6 +613,13 @@ export function CascadeStage({
     if (tool !== "move") {
       setSelectedLetterId(null);
     }
+    // Reset the shared pencil/eraser stroke ref on any tool switch.
+    // Without this, multi-touch users who tap a tool button mid-stroke
+    // (e.g., drawing with pencil and another finger taps eraser) would
+    // see the new tool's first move draw from the OLD tool's lastX/lastY
+    // — a stray line/erase stripe across the canvas. The stroke ref
+    // is shared between both because they use the same gesture shape.
+    strokeRef.current = { active: false, lastX: 0, lastY: 0 };
     return () => {
       document.body.classList.remove("cascade-focused");
     };
@@ -1058,8 +1084,16 @@ export function CascadeStage({
     if (!target.closest(".cascade-a4-stage")) return;
     // On mobile, only refocus when the user is in the "type" tool —
     // otherwise tapping the stage to drag/draw/erase would pop the soft
-    // keyboard. Desktop always refocuses (no soft keyboard to worry
-    // about, and typing should work the instant any control is clicked).
+    // keyboard. Desktop also refocuses when in non-textbox tools so
+    // typing reaches the cascade keyboard input.
+    //
+    // BUG FIX: in the "textbox" tool, refocusing keyInputRef here
+    // steals focus from the just-mounted pending input → its onBlur
+    // fires immediately → commitPendingTextBox with empty value →
+    // input unmounts before the user can type a single character.
+    // The pending input owns focus during textbox placement; skip
+    // refocus to let autoFocus win.
+    if (tool === "textbox") return;
     const isMobile = window.matchMedia("(max-width: 700px)").matches;
     if (isMobile && tool !== "type") return;
     keyInputRef.current?.focus();
@@ -1180,15 +1214,23 @@ export function CascadeStage({
    * radius). Used by both pointerdown and pointermove in eraser mode. */
   function eraseLettersNear(px: number, py: number): boolean {
     let removed = false;
+    let erasedSelected = false;
     for (let i = runtime.letters.length - 1; i >= 0; i--) {
       const l = runtime.letters[i];
       const dx = l.body.position.x - px;
       const dy = l.body.position.y - py;
       if (Math.hypot(dx, dy) <= ERASER_RADIUS_CSS + l.size * 0.42) {
+        // If we're erasing the currently-selected letter, drop the
+        // selection so the overlay doesn't dangle pointing at a now-
+        // missing body. Without this, gestures that check
+        // `selectedLetterId !== null` (2-finger pinch, corner-resize,
+        // hover-rotate) would target a deleted letter id.
+        if (l.id === selectedLetterId) erasedSelected = true;
         removeLetter(l.id);
         removed = true;
       }
     }
+    if (erasedSelected) setSelectedLetterId(null);
     return removed;
   }
 
@@ -1267,12 +1309,13 @@ export function CascadeStage({
         if (selectedTextBoxId === id) setSelectedTextBoxId(null);
         return;
       }
-      // TEXTBOX RESIZE HANDLE: bottom-right corner. Drag away from
-      // the box center to scale fontSize up; drag toward center to
-      // shrink. Snapshots initial pointer distance + fontSize so the
-      // ratio is stable across moves.
+      // TEXTBOX CORNER-RESIZE: one of the 4 corner squares on the
+      // selected textbox overlay. Ratio-based — snapshot pointer's
+      // initial distance from box center + the box's fontSize so
+      // pointer-move can compute (currentDist / initialDist) ×
+      // initialFontSize. Same gesture math as letter corner-resize.
       const rzTarget = (e.target as HTMLElement | null);
-      if (rzTarget?.dataset?.cascadeHandle === "resize-textbox") {
+      if (rzTarget?.dataset?.cascadeHandle === "resize-textbox-corner") {
         const id = Number(rzTarget.dataset.textboxId);
         const box = textBoxes.find((b) => b.id === id);
         const el = textBoxElemsRef.current.get(id);
@@ -1296,22 +1339,19 @@ export function CascadeStage({
           return;
         }
       }
-      // TEXTBOX ROTATE HANDLE: clicking on the yellow rotate-ball that
-      // orbits the selected textbox starts a rotation gesture. The
-      // handle has data-cascade-handle="rotate-textbox" + data-textbox-id
-      // so we can identify both the gesture type and which box.
+      // TEXTBOX HOVER-ROTATE: pointerdown on the invisible halo that
+      // extends past each corner square (the Figma-style "approach the
+      // corner → cursor turns to rotate" affordance). Same rotation
+      // gesture as the old orbiting ball — atan2 of pointer relative
+      // to box center → delta from initial → applied to box.rotation.
       const rotTarget = (e.target as HTMLElement | null);
-      if (rotTarget?.dataset?.cascadeHandle === "rotate-textbox") {
+      if (rotTarget?.dataset?.cascadeHandle === "rotate-textbox-corner") {
         const id = Number(rotTarget.dataset.textboxId);
         const box = textBoxes.find((b) => b.id === id);
         const el = textBoxElemsRef.current.get(id);
         if (box && el) {
           e.preventDefault();
           safeCapture(e);
-          // The textbox span has transform-origin: center (CSS default)
-          // so its viewport-axis-aligned bbox center IS the rotation
-          // pivot regardless of current rotation angle. Use it as the
-          // anchor for computing pointer angles below.
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
@@ -1431,8 +1471,54 @@ export function CascadeStage({
             // the baseline; pointer-move recomputes the ratio and
             // scales setLetterSize. 1 floor to avoid div-by-zero if
             // both touches register at the same pixel.
-            initialPointersDist: initDist > 1 ? initDist : 1,
+            // Floor at 20px (not 1) so two fingers starting nearly
+            // touching don't produce an enormous scale ratio when
+            // they separate — the ratio (curDist/initDist) gets
+            // amplified ~50x for fingers starting close, jarring
+            // the user before the size clamp kicks in.
+            initialPointersDist: initDist > 20 ? initDist : 20,
             initialBodySize: letter.size,
+          };
+        }
+        e.preventDefault();
+        safeCapture(e);
+        return;
+      }
+      // TEXTBOX TWO-FINGER PINCH+ROTATE detection. Mirrors the letter
+      // path: when a textbox is selected and a 2nd finger lands, snapshot
+      // the initial pointers' angle + distance and the box's pre-gesture
+      // rotation + fontSize. pointer-move then computes ratios/deltas.
+      // Letter and textbox selection are mutually exclusive (selecting
+      // one clears the other), so the two 2-finger branches won't both
+      // fire on the same gesture.
+      if (
+        pointersRef.current.size === 2 &&
+        selectedTextBoxId !== null &&
+        !textBoxTwoFingerRef.current.active
+      ) {
+        const pts = [...pointersRef.current.values()];
+        const initAng = Math.atan2(
+          pts[1].clientY - pts[0].clientY,
+          pts[1].clientX - pts[0].clientX,
+        );
+        const initDist = Math.hypot(
+          pts[1].clientX - pts[0].clientX,
+          pts[1].clientY - pts[0].clientY,
+        );
+        const box = textBoxes.find((b) => b.id === selectedTextBoxId);
+        if (box) {
+          textBoxTwoFingerRef.current = {
+            active: true,
+            id: box.id,
+            initialPointersAngle: initAng,
+            initialBoxRotation: box.rotation,
+            // Floor at 20px (not 1) so two fingers starting nearly
+            // touching don't produce an enormous scale ratio when
+            // they separate — the ratio (curDist/initDist) gets
+            // amplified ~50x for fingers starting close, jarring
+            // the user before the size clamp kicks in.
+            initialPointersDist: initDist > 20 ? initDist : 20,
+            initialFontSize: box.fontSize,
           };
         }
         e.preventDefault();
@@ -1513,6 +1599,34 @@ export function CascadeStage({
     // 2-finger gesture reads from this on each move.
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    }
+    // TEXTBOX TWO-FINGER PINCH+ROTATE: highest precedence in move mode
+    // when active. Reads BOTH pointers' current positions, computes
+    // (curAngle - initAngle) for rotation delta and (curDist /
+    // initDist) for fontSize ratio. Both applied simultaneously to the
+    // selected textbox. Letter twoFinger has the same shape.
+    if (tool === "move" && textBoxTwoFingerRef.current.active && pointersRef.current.size >= 2) {
+      const pts = [...pointersRef.current.values()];
+      const curAngle = Math.atan2(
+        pts[1].clientY - pts[0].clientY,
+        pts[1].clientX - pts[0].clientX,
+      );
+      const curDist = Math.hypot(
+        pts[1].clientX - pts[0].clientX,
+        pts[1].clientY - pts[0].clientY,
+      );
+      const angleDelta = curAngle - textBoxTwoFingerRef.current.initialPointersAngle;
+      const distRatio = curDist / textBoxTwoFingerRef.current.initialPointersDist;
+      const id = textBoxTwoFingerRef.current.id;
+      const initRot = textBoxTwoFingerRef.current.initialBoxRotation;
+      const initSize = textBoxTwoFingerRef.current.initialFontSize;
+      // Same [12, 200] clamp as the single-finger resize so the user
+      // can't pinch out to invisible or comically huge.
+      const newSize = Math.max(12, Math.min(200, initSize * distRatio));
+      setTextBoxes((cs) =>
+        cs.map((b) => (b.id === id ? { ...b, fontSize: newSize, rotation: initRot + angleDelta } : b)),
+      );
+      return;
     }
     // TEXTBOX RESIZE: highest precedence in move mode. Pointer
     // distance from box center / initial distance → scale factor for
@@ -1702,6 +1816,39 @@ export function CascadeStage({
     // Drop this pointer from the tracked set. Done BEFORE the move-tool
     // branch so the 2-finger exit logic sees the post-removal count.
     pointersRef.current.delete(e.pointerId);
+    // TEXTBOX 2-FINGER end: drop into single-finger mode when only one
+    // pointer remains (or zero). Mirrors the letter twoFinger cleanup
+    // including the drag-offset RE-ANCHOR: if a single-finger drag was
+    // in progress when the 2nd finger landed, the gesture paused the
+    // drag. When the 2nd finger lifts, we recompute the surviving
+    // finger's offset to the box so it doesn't snap back to the
+    // original grab point.
+    if (textBoxTwoFingerRef.current.active && pointersRef.current.size < 2) {
+      textBoxTwoFingerRef.current = {
+        active: false,
+        id: null,
+        initialPointersAngle: 0,
+        initialBoxRotation: 0,
+        initialPointersDist: 1,
+        initialFontSize: 64,
+      };
+      if (textBoxDragRef.current.id !== null && pointersRef.current.size === 1) {
+        const remaining = [...pointersRef.current.values()][0];
+        const rect = stageRef.current?.getBoundingClientRect();
+        if (rect) {
+          const scale = rect.width / A4_WIDTH;
+          const px = (remaining.clientX - rect.left) / (scale || 1);
+          const py = (remaining.clientY - rect.top) / (scale || 1);
+          const id = textBoxDragRef.current.id;
+          const box = textBoxes.find((b) => b.id === id);
+          if (box) {
+            textBoxDragRef.current.offsetX = px - box.x;
+            textBoxDragRef.current.offsetY = py - box.y;
+          }
+        }
+      }
+      return;
+    }
     // TEXTBOX RESIZE end: clear the resize ref.
     if (textBoxResizeRef.current.id !== null) {
       textBoxResizeRef.current = { id: null, centerX: 0, centerY: 0, initialDist: 1, initialFontSize: 12 };
@@ -2163,34 +2310,104 @@ export function CascadeStage({
                 data-html2canvas-ignore-children="false"
               >
                 {b.text}
-                {/* Rotation handle — orbits the box (because it's a
-                    child of the rotated span). Same data-html2canvas-
-                    ignore trick as the letter overlay so the yellow
-                    ball doesn't leak into the saved JPG. */}
+                {/* Selection overlay: 4 corner stacks (halo + square)
+                    + a delete badge. Mirrors the letter overlay UX —
+                    each corner has an invisible 36×36 halo for the
+                    Figma-style hover-rotate affordance with the 12×12
+                    visible resize square nested at the corner point.
+                    All children of the rotated span so they orbit with
+                    the box automatically. data-html2canvas-ignore on
+                    each so they don't leak into saved JPGs.
+
+                    Delete badge is rendered LAST + z-index:2 (see CSS)
+                    so it stacks above the top-right halo, otherwise
+                    the halo's pointer-events:auto would steal the
+                    delete tap. */}
                 {isSelected ? (
                   <>
-                    <span
-                      className="cascade-textbox-rotate-handle"
-                      data-cascade-handle="rotate-textbox"
-                      data-textbox-id={b.id}
-                      data-html2canvas-ignore="true"
-                      aria-label="rotate text box"
-                      role="button"
-                    />
-                    {/* Resize handle — bottom-right corner. Drag away
-                        from center to grow, toward center to shrink.
-                        Same color/border pattern as the rotate ball. */}
-                    <span
-                      className="cascade-textbox-resize-handle"
-                      data-cascade-handle="resize-textbox"
-                      data-textbox-id={b.id}
-                      data-html2canvas-ignore="true"
-                      aria-label="resize text box"
-                      role="button"
-                    />
-                    {/* Delete badge — small × at top-right. Tap
-                        removes just this textbox (same outcome as
-                        Backspace key shortcut). */}
+                    {([
+                      { pos: "tl", top: 0, left: 0, cursor: "nwse-resize" },
+                      { pos: "tr", top: 0, left: "100%", cursor: "nesw-resize" },
+                      { pos: "bl", top: "100%", left: 0, cursor: "nesw-resize" },
+                      { pos: "br", top: "100%", left: "100%", cursor: "nwse-resize" },
+                    ] as const).map((c) => (
+                      <span
+                        key={c.pos}
+                        className="cascade-letter-corner-halo"
+                        data-cascade-handle="rotate-textbox-corner"
+                        data-textbox-id={b.id}
+                        data-html2canvas-ignore="true"
+                        aria-label="rotate text box"
+                        role="button"
+                        // BUG FIX: corner halos cover most of the textbox
+                        // for small boxes, so double-clicking near a
+                        // corner used to land on the halo (which has
+                        // its own pointer-events) instead of the box
+                        // span — and dblclick fires only on the SAME
+                        // element for both clicks. Forward dblclick
+                        // here to the same edit handler so the user can
+                        // double-click anywhere on the box area.
+                        // Clear textBoxRotateRef first — each click in
+                        // the dblclick sequence set it on pointerdown;
+                        // even though pointerup clears it normally, on
+                        // slow devices the cleanup might race with the
+                        // dblclick handler entering edit mode and a
+                        // stale rotate ref could fire on the next move.
+                        onDoubleClick={(e) => {
+                          if (tool !== "move") return;
+                          e.stopPropagation();
+                          e.preventDefault();
+                          textBoxRotateRef.current = { id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 };
+                          handleStartEdit(b.id);
+                        }}
+                        style={{
+                          position: "absolute",
+                          top: c.top,
+                          left: c.left,
+                          width: "36px",
+                          height: "36px",
+                          // Center the halo on the corner point.
+                          transform: "translate(-50%, -50%)",
+                          pointerEvents: "auto",
+                          touchAction: "none",
+                        }}
+                      >
+                        <span
+                          className="cascade-letter-corner"
+                          data-cascade-handle="resize-textbox-corner"
+                          data-textbox-id={b.id}
+                          data-corner={c.pos}
+                          aria-label="resize text box"
+                          role="button"
+                          style={{
+                            position: "absolute",
+                            left: "50%",
+                            top: "50%",
+                            width: "12px",
+                            height: "12px",
+                            // currentColor would be #111 here (badge
+                            // text color); we want the box's color
+                            // for visual parity with the text itself.
+                            background: b.color,
+                            // 1.5px dark border keeps the square
+                            // visible when b.color matches the poster
+                            // bg — e.g., yellow textbox on yellow bg
+                            // the square would otherwise vanish and
+                            // the user couldn't see where to grab.
+                            // border-box keeps total size at 12px
+                            // (default content-box would bloat the
+                            // square to 15px, encroaching on the
+                            // halo's rotate-cursor area).
+                            border: "1.5px solid #111",
+                            boxSizing: "border-box",
+                            cursor: c.cursor,
+                            transform: "translate(-50%, -50%)",
+                            pointerEvents: "auto",
+                            touchAction: "none",
+                          }}
+                        />
+                      </span>
+                    ))}
                     <span
                       className="cascade-textbox-delete-badge"
                       data-cascade-handle="delete-textbox"
@@ -2362,6 +2579,17 @@ export function CascadeStage({
                           height: `${cornerSize}px`,
                           transform: "translate(-50%, -50%)",
                           background: fg,
+                          // 1.5px dark border keeps the square visible
+                          // when fg matches the poster bg — same fix
+                          // as the textbox corners. Without it, e.g.
+                          // a yellow letter on a yellow bg has invisible
+                          // resize handles.
+                          // border-box keeps total size at cornerSize
+                          // (default content-box would bloat the
+                          // square, encroaching on the halo's
+                          // rotate-cursor area).
+                          border: "1.5px solid #111",
+                          boxSizing: "border-box",
                           cursor: c.cursor,
                           pointerEvents: "auto",
                           touchAction: "none",
