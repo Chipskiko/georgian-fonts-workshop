@@ -467,7 +467,17 @@ function svgPathToOpentype(d: string, _cellW: number, cellH: number): opentype.P
   // Fix: ensure inner contours wind OPPOSITE to the outer contour
   // (= positive signed area when outer is negative, and vice versa).
   // Then non-zero rule: outer(±1) + inner(∓1) = 0 inside the hole.
-  const corrected = fixCFFWinding(transformed);
+  //
+  // GUIDE-LINE ARTIFACT REMOVAL: filter out subpaths matching the
+  // template's printed-guide signature BEFORE fixCFFWinding runs
+  // (fewer subpaths to evaluate + winding correction never gets
+  // distracted by template artifacts). The signature was tuned in
+  // scripts/fix-guide-artifacts.mjs against 71 production fonts
+  // before being lifted into the live pipeline — same constants,
+  // same detection logic, just runs on every new upload now so we
+  // never have to post-process again.
+  const deartifacted = stripGuideArtifacts(transformed);
+  const corrected = fixCFFWinding(deartifacted);
 
   const path = new opentype.Path();
   for (const cmd of corrected) {
@@ -488,6 +498,104 @@ function svgPathToOpentype(d: string, _cellW: number, cellH: number): opentype.P
     }
   }
   return path;
+}
+
+// --- Guide-line artifact filter -----------------------------------------
+//
+// The printed workshop template draws four light-grey horizontal guide
+// lines per cell (ascender / cap-height / x-height / baseline). They're
+// designed to be lighter than the scan threshold, but in practice they
+// frequently bleed through — bad lighting, aggressive Otsu, JPEG-edge
+// darkening. Result: every glyph carries a thin horizontal stripe or
+// row of dots at the cell edges (Y≈0 baseline, Y≈750 ascender top),
+// which renders as an unwanted underline under typeset text.
+//
+// Constants below were calibrated against 71 production fonts in
+// scripts/fix-guide-artifacts.mjs — see that file's commit message
+// (ea34280) for the empirical Y-histogram + aspect-ratio data.
+
+/** Max bbox height for a subpath to qualify as an artifact. Real
+ *  glyph strokes (drawn with markers) are thicker than this. */
+const GUIDE_ARTIFACT_MAX_H = 30;
+
+/** Min aspect ratio (width/height) for the LONG-STRIPE detector.
+ *  Catches obvious continuous guide-lines + long dashes. Smaller
+ *  dot-like marks fall through to the SMALL_DOT detector below. */
+const GUIDE_ARTIFACT_MIN_ASPECT = 2.5;
+
+/** Width range for the SMALL DOT detector. Guide-dots after warp
+ *  measure ~25-40 units wide × 10-20 tall (aspect 1.5-2.5) — too
+ *  square for the aspect filter. The 15-60 window excludes noise
+ *  specks (<15) and full glyph strokes that happen to span the cell
+ *  width (>60). */
+const GUIDE_ARTIFACT_SMALL_DOT_MIN_W = 15;
+const GUIDE_ARTIFACT_SMALL_DOT_MAX_W = 60;
+
+/** Y centroids of cell-divider artifacts in font coordinate space.
+ *  See svgPathToOpentype for the pixel-to-font scaling that places
+ *  these:
+ *    baseline (= 0) — cell-bottom divider line
+ *    ascender (= 750) — cell-top edge + label-divider line
+ *  ±60 tolerance accommodates trace wobble — fxali histogram showed
+ *  artifacts clustering at Y=0 (98 hits) and Y=-50 (49 hits). */
+const GUIDE_ARTIFACT_Y_CENTERS = [0, 750];
+const GUIDE_ARTIFACT_Y_TOLERANCE = 60;
+
+/** True when a subpath's geometry matches a printed-template
+ *  artifact (horizontal stripe OR small dot near a cell edge). The
+ *  Y-near-guide check is the primary safety guard against false
+ *  positives — small thin subpaths in the MIDDLE of a cell are
+ *  almost certainly real glyph features and are left alone. */
+function isGuideArtifact(subpath: ParsedCmd[]): boolean {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const c of subpath) {
+    for (const [x, y] of c.points) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  const w = maxX - minX;
+  const h = maxY - minY;
+  if (h <= 0 || h >= GUIDE_ARTIFACT_MAX_H) return false;
+
+  // Primary guard: must sit near a guide line.
+  const cy = (minY + maxY) / 2;
+  let nearGuide = false;
+  for (const center of GUIDE_ARTIFACT_Y_CENTERS) {
+    if (Math.abs(cy - center) <= GUIDE_ARTIFACT_Y_TOLERANCE) {
+      nearGuide = true;
+      break;
+    }
+  }
+  if (!nearGuide) return false;
+
+  // Two-prong match: long-stripe (aspect-based) or small-dot (width-based).
+  if (h > 0 && w / h >= GUIDE_ARTIFACT_MIN_ASPECT) return true;
+  if (w >= GUIDE_ARTIFACT_SMALL_DOT_MIN_W && w <= GUIDE_ARTIFACT_SMALL_DOT_MAX_W) return true;
+  return false;
+}
+
+/** Remove guide-line artifact subpaths from a glyph's command stream.
+ *  Splits by M-commands to identify subpaths, drops any matching
+ *  isGuideArtifact, flattens the survivors back. Idempotent — running
+ *  on an already-clean glyph is a no-op. */
+function stripGuideArtifacts(allCmds: ParsedCmd[]): ParsedCmd[] {
+  // Group into subpaths (each starts with M).
+  const subs: ParsedCmd[][] = [];
+  let cur: ParsedCmd[] = [];
+  for (const cmd of allCmds) {
+    if (cmd.type === "M" && cur.length > 0) {
+      subs.push(cur);
+      cur = [];
+    }
+    cur.push(cmd);
+  }
+  if (cur.length > 0) subs.push(cur);
+
+  // Filter out artifact subpaths and re-flatten.
+  return subs.filter((sp) => !isGuideArtifact(sp)).flat();
 }
 
 /** Group commands into subpaths (by M), compute each subpath's signed
