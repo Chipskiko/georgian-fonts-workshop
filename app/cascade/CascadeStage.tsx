@@ -471,7 +471,13 @@ export function CascadeStage({
     letterId: number | null;
     initialPointersAngle: number;
     initialBodyAngle: number;
-  }>({ active: false, letterId: null, initialPointersAngle: 0, initialBodyAngle: 0 });
+    // PINCH-RESIZE extension: snapshot the initial pointer-to-pointer
+    // distance + the letter's size at gesture start. On each move
+    // we apply (currentDistance / initialDistance) × initialSize to
+    // setLetterSize, so the letter scales with the pinch.
+    initialPointersDist: number;
+    initialBodySize: number;
+  }>({ active: false, letterId: null, initialPointersAngle: 0, initialBodyAngle: 0, initialPointersDist: 1, initialBodySize: 64 });
   // Desktop fallback for rotation: shift+drag a letter rotates instead
   // of translating. Same snapshot-and-delta pattern as twoFingerRef but
   // computed from the angle of (pointer - letter_center).
@@ -1410,6 +1416,10 @@ export function CascadeStage({
           pts[1].clientY - pts[0].clientY,
           pts[1].clientX - pts[0].clientX,
         );
+        const initDist = Math.hypot(
+          pts[1].clientX - pts[0].clientX,
+          pts[1].clientY - pts[0].clientY,
+        );
         const letter = runtime.letters.find((l) => l.id === selectedLetterId);
         if (letter) {
           twoFingerRef.current = {
@@ -1417,6 +1427,12 @@ export function CascadeStage({
             letterId: letter.id,
             initialPointersAngle: initAng,
             initialBodyAngle: letter.body.angle,
+            // Same fingers-apart distance + current letter size become
+            // the baseline; pointer-move recomputes the ratio and
+            // scales setLetterSize. 1 floor to avoid div-by-zero if
+            // both touches register at the same pixel.
+            initialPointersDist: initDist > 1 ? initDist : 1,
+            initialBodySize: letter.size,
           };
         }
         e.preventDefault();
@@ -1550,23 +1566,33 @@ export function CascadeStage({
       // top of the snapshot body angle.
       if (twoFingerRef.current.active && pointersRef.current.size >= 2) {
         const pts = [...pointersRef.current.values()];
-        const cur = Math.atan2(
+        const curAngle = Math.atan2(
           pts[1].clientY - pts[0].clientY,
           pts[1].clientX - pts[0].clientX,
         );
-        const delta = cur - twoFingerRef.current.initialPointersAngle;
+        const curDist = Math.hypot(
+          pts[1].clientX - pts[0].clientX,
+          pts[1].clientY - pts[0].clientY,
+        );
+        const angleDelta = curAngle - twoFingerRef.current.initialPointersAngle;
+        const distRatio = curDist / twoFingerRef.current.initialPointersDist;
         const letter = runtime.letters.find(
           (l) => l.id === twoFingerRef.current.letterId,
         );
         if (letter) {
+          // Pinch-resize FIRST (rebuilds the physics body), then
+          // re-apply the rotation. Apply ratio to the snapshotted
+          // initial size so the user's pinch is "absolute" relative
+          // to gesture start (not cumulative across pointer moves).
+          setLetterSize(letter, twoFingerRef.current.initialBodySize * distRatio);
           Matter.Body.setAngle(
             letter.body,
-            twoFingerRef.current.initialBodyAngle + delta,
+            twoFingerRef.current.initialBodyAngle + angleDelta,
           );
           setTick((n) => (n + 1) % 1_000_000);
         }
         // Skip translation while 2-finger is active so the letter
-        // doesn't simultaneously fly around — purely a rotation gesture.
+        // doesn't simultaneously fly around — purely rotate + pinch.
         return;
       }
       // SHIFT+DRAG rotation (desktop). Same delta-from-snapshot pattern,
@@ -1714,6 +1740,8 @@ export function CascadeStage({
           letterId: null,
           initialPointersAngle: 0,
           initialBodyAngle: 0,
+          initialPointersDist: 1,
+          initialBodySize: 64,
         };
         if (dragRef.current.letterId !== null && pointersRef.current.size === 1) {
           const remaining = [...pointersRef.current.values()][0];
