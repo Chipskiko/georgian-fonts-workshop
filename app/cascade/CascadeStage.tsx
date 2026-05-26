@@ -1758,24 +1758,15 @@ export function CascadeStage({
         const id = textBoxDragRef.current.id;
         const offX = textBoxDragRef.current.offsetX;
         const offY = textBoxDragRef.current.offsetY;
-        // OVERFLOW CONTINGENCY: clamp drag target to keep the box's
-        // rendered bounds inside the A4 canvas. Read the box's actual
-        // DOM bbox so we can offset against width/height (these vary
-        // by text length × fontSize × font). For ROTATED boxes the
-        // axis-aligned bbox is wider; getBoundingClientRect handles
-        // this for us. Stage-local px/py vs the box's stage-local
-        // size determines the clamp limits.
-        const el = textBoxElemsRef.current.get(id);
-        let bw = 0, bh = 0;
-        if (el) {
-          const br = el.getBoundingClientRect();
-          bw = br.width / (scale || 1);
-          bh = br.height / (scale || 1);
-        }
-        const rawX = px - offX;
-        const rawY = py - offY;
-        const newX = Math.max(0, Math.min(A4_WIDTH - bw, rawX));
-        const newY = Math.max(0, Math.min(A4_HEIGHT - bh, rawY));
+        // Track cursor 1:1 during the drag — DON'T clamp mid-gesture
+        // because clamping at the canvas edge pulls the box back
+        // while the cursor keeps moving, leaving the grab point
+        // visibly drifting away from the cursor. The pointerup
+        // handler snaps the box back inside the canvas if it ended
+        // outside, so the final state still respects the canvas
+        // bounds without drift artifacts during the gesture.
+        const newX = px - offX;
+        const newY = py - offY;
         setTextBoxes((cur) =>
           cur.map((b) => (b.id === id ? { ...b, x: newX, y: newY } : b)),
         );
@@ -1969,9 +1960,25 @@ export function CascadeStage({
       textBoxRotateRef.current = { id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 };
       return;
     }
-    // TEXTBOX DRAG end: clear the drag ref so subsequent letter-drag
-    // doesn't reuse the offsets.
+    // TEXTBOX DRAG end: snap the box back inside the canvas if the
+    // user released it partially or fully outside (mid-drag is
+    // unclamped so cursor tracks 1:1; clamp happens here on
+    // release). Uses unrotated clientWidth/clientHeight so the
+    // box's logical bounds — not the rotated AABB — are what fit
+    // within the canvas. Then clear the drag ref.
     if (textBoxDragRef.current.id !== null) {
+      const id = textBoxDragRef.current.id;
+      const elTb = textBoxElemsRef.current.get(id);
+      const bw = elTb ? elTb.clientWidth : 0;
+      const bh = elTb ? elTb.clientHeight : 0;
+      setTextBoxes((cur) =>
+        cur.map((b) => {
+          if (b.id !== id) return b;
+          const snapX = Math.max(0, Math.min(A4_WIDTH - bw, b.x));
+          const snapY = Math.max(0, Math.min(A4_HEIGHT - bh, b.y));
+          return snapX === b.x && snapY === b.y ? b : { ...b, x: snapX, y: snapY };
+        }),
+      );
       textBoxDragRef.current = { id: null, offsetX: 0, offsetY: 0 };
       return;
     }
