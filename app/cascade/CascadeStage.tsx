@@ -564,6 +564,21 @@ export function CascadeStage({
     setTick((n) => (n + 1) % 1_000_000);
   }
 
+  // BUG FIX: switching to a non-textbox tool while a pending input
+  // is open used to leave the input visible AND lose the typed text
+  // (the rendered input element survives tool changes since it
+  // depends on pendingTextBox state, not on tool). Force-commit
+  // any pending input as soon as the user switches away. If they
+  // typed nothing, commitPendingTextBox cleans up silently; if they
+  // typed something, it gets placed at the click position they
+  // originally clicked.
+  useEffect(() => {
+    if (tool !== "textbox" && pendingTextBox && pendingInputRef.current) {
+      commitPendingTextBox(pendingInputRef.current.value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool]);
+
   /** Commit (or discard) the pending textbox input. Called from the
    *  input's Enter handler and onBlur. Non-empty content becomes a
    *  new TextBox in the textBoxes list; empty content cleanly
@@ -618,10 +633,27 @@ export function CascadeStage({
   async function saveAndReset() {
     if (savingInFlightRef.current) return;
     if (!stageRef.current) return;
-    // Allow save if EITHER letters or drawings exist — drawing-only
-    // posters (pencil sketches with no typed text) are a legitimate
-    // workshop output. Previously letters-only check blocked them.
-    if (runtime.letters.length === 0 && !hasDrawing) return;
+    // BUG FIX: pre-save commit. If the user is mid-typing in a
+    // pending textbox input and hits save, the snapshot would
+    // capture the input (with its data-html2canvas-ignore'd dashed
+    // border SKIPPED but the typed text DROPPED entirely because
+    // the input gets unmounted in the post-save reset before its
+    // value lands in textBoxes). Commit now so anything typed gets
+    // placed and included in the snapshot.
+    if (pendingTextBox && pendingInputRef.current) {
+      commitPendingTextBox(pendingInputRef.current.value);
+    }
+    // Allow save if there's ANY content — letters, drawing, OR
+    // text boxes. Previously the guard checked only letters +
+    // drawing, so a textbox-only poster would silently bail here
+    // even though the save button was enabled.
+    if (
+      runtime.letters.length === 0
+      && !hasDrawing
+      && textBoxes.length === 0
+    ) {
+      return;
+    }
     savingInFlightRef.current = true;
     setSaveStatus("saving");
     try {
@@ -1031,6 +1063,17 @@ export function CascadeStage({
     if (tool === "textbox") {
       const rect = stageRef.current?.getBoundingClientRect();
       if (!rect) return;
+      // BUG FIX: if there's already a pending input open, commit it
+      // FIRST before opening a new one at the new position. Without
+      // this React reuses the same DOM <input> element (no key prop)
+      // → the input just appears to "move" to the new position with
+      // the old text still in it, then on Enter the user's first
+      // text gets overwritten + lost. Snapshot the current value
+      // straight from the live input DOM via the ref so we capture
+      // whatever the user typed before clicking again.
+      if (pendingTextBox && pendingInputRef.current) {
+        commitPendingTextBox(pendingInputRef.current.value);
+      }
       // Convert from viewport coords to stage-local. On mobile the
       // stage uses transform:scale, so divide by the rendered scale
       // to land in the layout-box coord space the textBoxes use.
@@ -2045,7 +2088,7 @@ export function CascadeStage({
             // typed letters OR pencil drawing — and a save isn't
             // already in flight. Consistent with the X clear button's
             // disabled rule above.
-            disabled={(letterCount === 0 && !hasDrawing) || saveStatus === "saving"}
+            disabled={(letterCount === 0 && !hasDrawing && textBoxes.length === 0 && !pendingTextBox) || saveStatus === "saving"}
           >
             შენახვა
           </button>
