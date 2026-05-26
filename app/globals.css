@@ -1565,6 +1565,29 @@ p {
   cursor: grabbing;
 }
 
+/* Letter selection corner handles. Visible 12px square with a dark
+   border (currentColor border was failing against the dashed bbox);
+   sits at each corner of the bbox. The surrounding 36px transparent
+   halo (.cascade-letter-corner-halo) extends past the visible square
+   on every side — that halo's cursor is the Figma-style rotation
+   icon ("alias" as the closest cross-browser unicode-cursor proxy),
+   and pointerdown there starts the rotate gesture. Clicks landing
+   exactly on the square (smaller, on top in stacking) start resize
+   instead, distinguished by data-cascade-handle="resize-letter". */
+.cascade-letter-corner {
+  border: 1.5px solid #111;
+  /* background is set inline (poster fg color) so the square stays
+     visible regardless of which palette the user picked. */
+}
+.cascade-letter-corner-halo {
+  /* alias = a "wavy curved arrow" / "shortcut" cursor — closest
+     cross-platform analog to Figma's dedicated rotate icon. On
+     macOS Safari it renders as a small curved arrow; on Windows
+     Chrome as a small alias arrow. Good enough for the affordance.
+     Could be swapped for a custom .svg url() in /cursors/ later. */
+  cursor: alias;
+}
+
 .cascade-save-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;

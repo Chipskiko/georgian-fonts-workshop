@@ -166,16 +166,15 @@ type Letter = {
   body: Matter.Body;
   char: string;
   fontId: string;
-  /** Current visual size (px). Equals baseSize * SCALES[scaleLevel]. */
+  /** Current visual size (px). Mutated by setLetterSize when the user
+   *  drags a corner-resize handle (was previously cycled through fixed
+   *  SCALES on double-click; that interaction is removed). */
   size: number;
-  /** Size when the letter was first spawned. Cycling resets back to this. */
+  /** Size when the letter was first spawned. Originally used by the
+   *  removed cycle-resize behaviour; kept as a record of the spawn
+   *  size in case any future "reset to original" affordance is added. */
   baseSize: number;
-  /** Index into SCALES — 0=original, 1=1.5x, 2=2x, then wraps back to 0. */
-  scaleLevel: number;
 };
-
-// Double-click cycles letter size through these multipliers, then wraps.
-const SCALES = [1.0, 1.5, 2.0];
 
 // Module-level singleton so engine + letters survive component remounts
 // (e.g. navigating between routes within the same tab). Cleared on
@@ -254,19 +253,23 @@ function spawnLetter(char: string, fontId: string) {
     fontId,
     size,
     baseSize: size,
-    scaleLevel: 0,
   });
 }
 
-/** Cycle a letter through SCALES. Body is replaced with a same-properties
- * one at the new radius — Matter.Body.scale leaves quirky mass/inertia
- * state, so a clean rebuild is safer. Position, angle and static-ness
- * are preserved. */
-function scaleUpLetter(letter: Letter) {
+/** Resize a letter by replacing its physics body with one at the new
+ *  radius. Matter.Body.scale leaves quirky mass/inertia state, so a
+ *  clean rebuild is safer than in-place scaling. Position, angle, and
+ *  static-ness are preserved. Used by the corner-resize gesture; was
+ *  previously called scaleUpLetter and cycled through fixed SCALES on
+ *  double-click — that interaction is gone, replaced with continuous
+ *  drag-to-scale via the bbox corner handles. */
+function setLetterSize(letter: Letter, newSize: number) {
   if (!runtime.engine) return;
-  const nextLevel = (letter.scaleLevel + 1) % SCALES.length;
-  const newSize = letter.baseSize * SCALES[nextLevel];
-  const newRadius = newSize * 0.42;
+  // Bounds: 20px floor keeps text legible + the physics body
+  // grabbable; 400px ceiling prevents an off-screen catastrophe
+  // from a runaway drag.
+  const clamped = Math.max(20, Math.min(400, newSize));
+  const newRadius = clamped * 0.42;
   const wasStatic = letter.body.isStatic;
   const px = letter.body.position.x;
   const py = letter.body.position.y;
@@ -282,8 +285,7 @@ function scaleUpLetter(letter: Letter) {
   Matter.Body.setAngle(newBody, angle);
   Matter.Composite.add(runtime.engine.world, newBody);
   letter.body = newBody;
-  letter.size = newSize;
-  letter.scaleLevel = nextLevel;
+  letter.size = clamped;
 }
 
 function removeLetter(id: number) {
@@ -424,6 +426,16 @@ export function CascadeStage({
   const rotateHandleRef = useRef<{ letterId: number | null }>({
     letterId: null,
   });
+  // Letter resize gesture state — same snapshot pattern as
+  // textBoxResizeRef. Triggered by corner-handle pointerdown; pointer
+  // move computes (current distance / initial distance) × initial size.
+  const resizeLetterRef = useRef<{
+    letterId: number | null;
+    centerX: number;
+    centerY: number;
+    initialDist: number;
+    initialSize: number;
+  }>({ letterId: null, centerX: 0, centerY: 0, initialDist: 1, initialSize: 64 });
   // True if the user has drawn anything on the draw canvas in the
   // current session (since the last clearAll / save). Drives whether
   // the clear-poster X button is enabled — without this, drawings-only
@@ -1335,13 +1347,43 @@ export function CascadeStage({
           return;
         }
       }
-      // Rotation-handle path: when the user lands on the small yellow
-      // handle that orbits the selected letter, branch to rotate mode
-      // instead of translate. The handle is a div with
-      // data-cascade-handle="rotate" + pointer-events:auto; the stage's
-      // delegated pointerdown still fires for it (event bubbling).
+      // LETTER CORNER-RESIZE: pointerdown on one of the 4 corner
+      // squares of the bbox overlay. Snapshot the letter's center +
+      // current size + the pointer's initial distance from center; on
+      // pointermove we'll compute (currentDist / initialDist) × size
+      // and apply via setLetterSize. Replaces the removed
+      // double-tap-cycle-scale interaction.
       const target = e.target as HTMLElement | null;
-      if (target?.dataset?.cascadeHandle === "rotate" && selectedLetterId !== null) {
+      if (target?.dataset?.cascadeHandle === "resize-letter" && selectedLetterId !== null) {
+        const sel = runtime.letters.find((l) => l.id === selectedLetterId);
+        if (sel) {
+          e.preventDefault();
+          safeCapture(e);
+          const stageRect = stageRef.current?.getBoundingClientRect();
+          if (stageRect) {
+            const scale = stageRect.width / A4_WIDTH;
+            // Letter center in viewport coords. The letter body's
+            // position is in stage-local px; convert to viewport by
+            // applying the scale + stage offset.
+            const centerX = stageRect.left + sel.body.position.x * scale;
+            const centerY = stageRect.top + sel.body.position.y * scale;
+            const initialDist = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+            resizeLetterRef.current = {
+              letterId: sel.id,
+              centerX,
+              centerY,
+              initialDist: initialDist > 1 ? initialDist : 1,
+              initialSize: sel.size,
+            };
+          }
+          return;
+        }
+      }
+      // LETTER HOVER-ROTATE: pointerdown on the invisible halo extending
+      // outside each corner. Same rotate gesture as the old orbiting
+      // ball — reuses rotateHandleRef. The halo provides the Figma-
+      // style "near-corner cursor changes to rotate" affordance.
+      if (target?.dataset?.cascadeHandle === "rotate-letter-corner" && selectedLetterId !== null) {
         e.preventDefault();
         safeCapture(e);
         rotateHandleRef.current = { letterId: selectedLetterId };
@@ -1550,6 +1592,21 @@ export function CascadeStage({
         return;
       }
       // Rotation-handle drag wins over translation. While the user has
+      // LETTER CORNER-RESIZE: pointer-move ratio × initial size, clamped
+      // by setLetterSize. Higher precedence than rotate so dragging the
+      // corner square doesn't accidentally also rotate.
+      if (resizeLetterRef.current.letterId !== null) {
+        const r = resizeLetterRef.current;
+        const curDist = Math.hypot(e.clientX - r.centerX, e.clientY - r.centerY);
+        const ratio = curDist / r.initialDist;
+        const newSize = r.initialSize * ratio;
+        const letter = runtime.letters.find((l) => l.id === r.letterId);
+        if (letter) {
+          setLetterSize(letter, newSize);
+          setTick((n) => (n + 1) % 1_000_000);
+        }
+        return;
+      }
       // the handle grabbed, we ignore translation logic entirely — set
       // the body's angle so its local +up direction (the handle's home
       // position) points at the current pointer location.
@@ -1671,6 +1728,12 @@ export function CascadeStage({
         }
         return;
       }
+      // End letter corner-resize (if active). Selection stays so
+      // the overlay sticks around for the next gesture.
+      if (resizeLetterRef.current.letterId !== null) {
+        resizeLetterRef.current = { letterId: null, centerX: 0, centerY: 0, initialDist: 1, initialSize: 64 };
+        return;
+      }
       // End rotation-handle drag (if active). Selection stays so the
       // overlay remains visible after release — same shape as a
       // typical select-then-rotate UX (Figma/Sketch).
@@ -1685,19 +1748,6 @@ export function CascadeStage({
       return;
     }
     strokeRef.current.active = false;
-  }
-
-  /** Double-click cycles the letter under the pointer through SCALES.
-   * Only meaningful in move mode. */
-  function handleDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (tool !== "move") return;
-    const p = pointerToPhysics(e.clientX, e.clientY);
-    if (!p) return;
-    const hit = letterAt(p.x, p.y);
-    if (!hit) return;
-    e.preventDefault();
-    scaleUpLetter(hit);
-    setTick((n) => (n + 1) % 1_000_000);
   }
 
   useEffect(() => {
@@ -1973,7 +2023,6 @@ export function CascadeStage({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          onDoubleClick={handleDoubleClick}
         >
           {/* Drawing canvas — sits behind letters so glyphs stay on top.
               Buffer is at print resolution; CSS display fills the stage
@@ -2200,24 +2249,30 @@ export function CascadeStage({
             // size*0.5 + padding). Keep it loose so the dashes don't
             // visually crowd the glyph edges.
             const side = sel.size + 8;
-            // Handle sits directly above the letter in its LOCAL frame
-            // (so it rotates with the letter — visual feedback that
-            // rotation works). Distance: half-side + breathing room +
-            // half-handle so the line+circle don't overlap the bbox.
-            // Radius 14 (28px diameter) is large enough to comfortably
-            // hit on phone (iOS recommends ≥44px but the surrounding
-            // line + visual chunk make this hittable in practice).
-            const handleR = 14;
-            const handleDist = side / 2 + 18 + handleR;
+            // The four corners of the bbox in the LETTER's LOCAL FRAME
+            // (origin = letter center, no rotation). Same offsets
+            // regardless of letter rotation; the per-corner transform
+            // below rotates these into stage space.
+            const half = side / 2;
+            const corners = [
+              { pos: "tl", dx: -half, dy: -half, cursor: "nwse-resize" },
+              { pos: "tr", dx:  half, dy: -half, cursor: "nesw-resize" },
+              { pos: "bl", dx: -half, dy:  half, cursor: "nesw-resize" },
+              { pos: "br", dx:  half, dy:  half, cursor: "nwse-resize" },
+            ] as const;
+            // Visible corner square dimensions + invisible halo
+            // (extends 12px past the square in every direction). The
+            // halo is the Figma-style hover-rotate zone — cursor
+            // changes to a rotate icon there + pointerdown rotates.
+            const cornerSize = 12;
+            const haloSize = cornerSize + 24;
             return (
               <>
                 {/* Bounding box: rotates with the letter via the same
                     transform pattern the letter span uses.
                     data-html2canvas-ignore tells the save-poster
                     snapshotter to skip this element — otherwise the
-                    dashed bbox + spine + handle bleed into the saved
-                    JPG when a letter happens to be selected at save
-                    time. */}
+                    dashed bbox bleeds into the saved JPG. */}
                 <div
                   className="cascade-bbox"
                   data-html2canvas-ignore="true"
@@ -2231,52 +2286,62 @@ export function CascadeStage({
                     transform: `translate3d(${cx}px, ${cy}px, 0) translate(-50%, -50%) rotate(${ang}rad)`,
                     transformOrigin: "center",
                     pointerEvents: "none",
+                    color: fg,
                   }}
                 />
-                {/* Spine line from letter center to handle. Lives in the
-                    same rotating local frame so it always reads as
-                    "letter's up-axis". */}
-                <div
-                  className="cascade-handle-spine"
-                  data-html2canvas-ignore="true"
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    width: "1px",
-                    height: `${handleDist}px`,
-                    // Rotate first (about local origin), then translate
-                    // up by handleDist so the line spans center→handle.
-                    transform: `translate3d(${cx}px, ${cy}px, 0) rotate(${ang}rad) translate(0, -${handleDist}px)`,
-                    transformOrigin: "top left",
-                    pointerEvents: "none",
-                  }}
-                />
-                {/* The handle itself — pointer-events:auto so it can
-                    receive the pointerdown that bubbles to the stage's
-                    delegated handler. data-cascade-handle lets that
-                    handler distinguish handle-drag from letter-drag. */}
-                <div
-                  className="cascade-rotate-handle"
-                  data-cascade-handle="rotate"
-                  data-html2canvas-ignore="true"
-                  aria-label="rotate letter"
-                  role="button"
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    width: `${handleR * 2}px`,
-                    height: `${handleR * 2}px`,
-                    // Same pattern: rotate then offset along the local
-                    // -y direction (which is "up" in the letter's frame).
-                    transform: `translate3d(${cx}px, ${cy}px, 0) rotate(${ang}rad) translate(-${handleR}px, -${handleDist + handleR}px)`,
-                    transformOrigin: "top left",
-                    pointerEvents: "auto",
-                    touchAction: "none",
-                  }}
-                />
+                {/* Per-corner stack: invisible hover-rotate halo with
+                    the visible resize square nested inside. The square
+                    has its own data-cascade-handle and pointerdown
+                    captures the resize gesture; the surrounding halo
+                    captures the rotate gesture for hover-rotate UX.
+                    Both transform via rotate-then-translate-to-corner
+                    so they orbit the letter as it rotates. */}
+                {corners.map((c) => {
+                  // Compose: translate to letter center, rotate by ang,
+                  // translate to corner offset, finally translate by
+                  // -50%/-50% so the halo (and the square within it)
+                  // is centered on the corner point.
+                  const xf = `translate3d(${cx}px, ${cy}px, 0) rotate(${ang}rad) translate(${c.dx}px, ${c.dy}px) translate(-50%, -50%)`;
+                  return (
+                    <div
+                      key={c.pos}
+                      className="cascade-letter-corner-halo"
+                      data-cascade-handle="rotate-letter-corner"
+                      data-html2canvas-ignore="true"
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        top: 0,
+                        width: `${haloSize}px`,
+                        height: `${haloSize}px`,
+                        transform: xf,
+                        transformOrigin: "top left",
+                        pointerEvents: "auto",
+                        touchAction: "none",
+                      }}
+                    >
+                      <div
+                        className="cascade-letter-corner"
+                        data-cascade-handle="resize-letter"
+                        data-corner={c.pos}
+                        aria-label="resize letter"
+                        role="button"
+                        style={{
+                          position: "absolute",
+                          left: "50%",
+                          top: "50%",
+                          width: `${cornerSize}px`,
+                          height: `${cornerSize}px`,
+                          transform: "translate(-50%, -50%)",
+                          background: fg,
+                          cursor: c.cursor,
+                          pointerEvents: "auto",
+                          touchAction: "none",
+                        }}
+                      />
+                    </div>
+                  );
+                })}
               </>
             );
           })()}
