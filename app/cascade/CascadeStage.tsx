@@ -55,7 +55,30 @@ const DRAW_SCALE = SAVE_PX_W / A4_WIDTH;
 const PENCIL_WIDTH_CSS = 3; // CSS px on screen
 const ERASER_RADIUS_CSS = 14; // CSS px on screen
 
-type Tool = "move" | "pencil" | "eraser" | "type";
+type Tool = "move" | "pencil" | "eraser" | "type" | "textbox";
+
+/** Static text element placed by the textbox tool. Unlike Letter
+ *  (physics body that falls + collides), TextBox sits where the user
+ *  places it and only moves when explicitly dragged. Renders as a
+ *  positioned <div> on the stage; html2canvas captures the DOM
+ *  directly so saving works for free. */
+type TextBox = {
+  id: number;
+  /** Stage-local coordinates of the text box's TOP-LEFT corner. */
+  x: number;
+  y: number;
+  /** The text content. Empty after commit removes the box. */
+  text: string;
+  /** Font family used to render. Snapshotted at place-time so changing
+   *  the picker selection later doesn't reflow already-placed boxes. */
+  fontId: string;
+  /** Display color (foreground). Same snapshotting reason. */
+  color: string;
+  /** Font-size in px. Fixed at place-time so the workshop participant
+   *  can place several boxes at consistent sizes; future iteration
+   *  could add resize handles. */
+  fontSize: number;
+};
 
 // Default poster colors match the workshop's two-color palette
 // inverted from the site chrome — site is pink with yellow text, the
@@ -300,6 +323,26 @@ export function CascadeStage({
   // typeface — including a Latin→Georgian transliteration preview so
   // even Latin-named fonts display their custom letterforms.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // TextBox tool state: placed text elements + active input position.
+  // textBoxes are committed, draggable elements. pendingTextBox is the
+  // ephemeral input UX — visible only while the user is typing into a
+  // brand-new box. On commit (Enter/blur with content) it gets pushed
+  // into textBoxes and pendingTextBox clears; on commit with empty
+  // content the input vanishes without adding anything.
+  const [textBoxes, setTextBoxes] = useState<TextBox[]>([]);
+  const [pendingTextBox, setPendingTextBox] = useState<
+    null | { x: number; y: number; fontId: string; color: string; fontSize: number }
+  >(null);
+  const textBoxIdRef = useRef(0);
+  const pendingInputRef = useRef<HTMLInputElement | null>(null);
+  // TextBox drag state — analogous to dragRef for letters. Stored
+  // in a ref so the document-level pointer-move handler doesn't pay
+  // re-render cost while dragging.
+  const textBoxDragRef = useRef<{
+    id: number | null;
+    offsetX: number;
+    offsetY: number;
+  }>({ id: null, offsetX: 0, offsetY: 0 });
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   // Current pointer tool: move (drag/resize letters), pencil (draw lines),
   // eraser (delete letters + erase canvas pixels).
@@ -516,7 +559,33 @@ export function CascadeStage({
     clearAll();
     clearDrawCanvas();
     setSelectedLetterId(null);
+    setTextBoxes([]);
+    setPendingTextBox(null);
     setTick((n) => (n + 1) % 1_000_000);
+  }
+
+  /** Commit (or discard) the pending textbox input. Called from the
+   *  input's Enter handler and onBlur. Non-empty content becomes a
+   *  new TextBox in the textBoxes list; empty content cleanly
+   *  cancels — no zero-content boxes left behind. */
+  function commitPendingTextBox(text: string) {
+    const trimmed = text.trim();
+    if (!pendingTextBox) return;
+    if (trimmed.length > 0) {
+      setTextBoxes((cur) => [
+        ...cur,
+        {
+          id: ++textBoxIdRef.current,
+          x: pendingTextBox.x,
+          y: pendingTextBox.y,
+          text: trimmed,
+          fontId: pendingTextBox.fontId,
+          color: pendingTextBox.color,
+          fontSize: pendingTextBox.fontSize,
+        },
+      ]);
+    }
+    setPendingTextBox(null);
   }
 
   async function ensureFontFaceLoaded(font: FontEntry) {
@@ -589,6 +658,10 @@ export function CascadeStage({
       //       walks the DOM.
       const fontsInUse = new Set<string>();
       for (const l of runtime.letters) fontsInUse.add(l.fontId);
+      // Same race fix applies to TextBox fonts — each box snapshots
+      // its fontId at place-time so they may differ from the current
+      // picker selection. Force-load every one.
+      for (const b of textBoxes) fontsInUse.add(b.fontId);
       if (currentFontIdRef.current && currentFontIdRef.current !== RANDOM_FONT_ID) {
         fontsInUse.add(currentFontIdRef.current);
       }
@@ -715,6 +788,8 @@ export function CascadeStage({
       clearAll();
       clearDrawCanvas();
       setSelectedLetterId(null);
+      setTextBoxes([]);
+      setPendingTextBox(null);
       setSaveStatus("saved");
       setTick((n) => (n + 1) % 1_000_000);
       window.setTimeout(() => setSaveStatus("idle"), 5000);
@@ -949,7 +1024,60 @@ export function CascadeStage({
     // 2-finger gesture detection below.
     pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
+    // TEXTBOX TOOL: clicking anywhere opens an input at the click
+    // position. The user types a word, presses Enter (or blurs) to
+    // commit, Escape to cancel. Resolved coordinates are stage-local
+    // (top-left = 0,0), matching how textBoxes are positioned.
+    if (tool === "textbox") {
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      // Convert from viewport coords to stage-local. On mobile the
+      // stage uses transform:scale, so divide by the rendered scale
+      // to land in the layout-box coord space the textBoxes use.
+      const scale = rect.width / A4_WIDTH;
+      const x = (e.clientX - rect.left) / (scale || 1);
+      const y = (e.clientY - rect.top) / (scale || 1);
+      // Snapshot the picker font + fg color at place-time so changing
+      // them later doesn't mutate this box.
+      const pickerId = currentFontIdRef.current;
+      const fontId = pickerId && pickerId !== RANDOM_FONT_ID
+        ? pickerId
+        : allFonts.length > 0
+          ? allFonts[Math.floor(Math.random() * allFonts.length)].id
+          : "serif";
+      setPendingTextBox({
+        x, y, fontId,
+        color: fgRef.current,
+        fontSize: 64,
+      });
+      // Don't capture/preventDefault — let click-events propagate
+      // normally so the input that mounts can take focus.
+      return;
+    }
+
     if (tool === "move") {
+      // TEXTBOX DRAG: clicking on a textbox in move mode picks it up
+      // for drag. The textbox <div> has data-textbox-id="N" so we can
+      // identify the hit target without geometric hit-testing.
+      const tbTarget = (e.target as HTMLElement | null)?.closest('[data-textbox-id]') as HTMLElement | null;
+      if (tbTarget) {
+        const id = Number(tbTarget.dataset.textboxId);
+        const box = textBoxes.find((b) => b.id === id);
+        if (box) {
+          e.preventDefault();
+          safeCapture(e);
+          const rect = stageRef.current?.getBoundingClientRect();
+          if (rect) {
+            const scale = rect.width / A4_WIDTH;
+            const px = (e.clientX - rect.left) / (scale || 1);
+            const py = (e.clientY - rect.top) / (scale || 1);
+            textBoxDragRef.current = {
+              id, offsetX: px - box.x, offsetY: py - box.y,
+            };
+          }
+          return;
+        }
+      }
       // Rotation-handle path: when the user lands on the small yellow
       // handle that orbits the selected letter, branch to rotate mode
       // instead of translate. The handle is a div with
@@ -1063,6 +1191,25 @@ export function CascadeStage({
     // 2-finger gesture reads from this on each move.
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    }
+    // TEXTBOX DRAG: highest precedence in move mode so it doesn't
+    // collide with letter-drag / rotation handlers below. Updates
+    // the dragged box's position to follow the pointer (minus the
+    // initial offset so the box doesn't jump under the cursor).
+    if (tool === "move" && textBoxDragRef.current.id !== null) {
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (rect) {
+        const scale = rect.width / A4_WIDTH;
+        const px = (e.clientX - rect.left) / (scale || 1);
+        const py = (e.clientY - rect.top) / (scale || 1);
+        const id = textBoxDragRef.current.id;
+        const offX = textBoxDragRef.current.offsetX;
+        const offY = textBoxDragRef.current.offsetY;
+        setTextBoxes((cur) =>
+          cur.map((b) => (b.id === id ? { ...b, x: px - offX, y: py - offY } : b)),
+        );
+      }
+      return;
     }
     if (tool === "move") {
       // TWO-FINGER PINCH-ROTATE: highest precedence on move while two
@@ -1182,6 +1329,12 @@ export function CascadeStage({
     // Drop this pointer from the tracked set. Done BEFORE the move-tool
     // branch so the 2-finger exit logic sees the post-removal count.
     pointersRef.current.delete(e.pointerId);
+    // TEXTBOX DRAG end: clear the drag ref so subsequent letter-drag
+    // doesn't reuse the offsets.
+    if (textBoxDragRef.current.id !== null) {
+      textBoxDragRef.current = { id: null, offsetX: 0, offsetY: 0 };
+      return;
+    }
     if (tool === "move") {
       // End shift+drag rotation.
       if (shiftRotateRef.current.letterId !== null) {
@@ -1448,6 +1601,33 @@ export function CascadeStage({
                 />
               </svg>
             </button>
+            {/* TextBox tool — click on canvas opens an input at that
+                position for typing a static word. Distinct from the
+                type tool which spawns physics letters that cascade. */}
+            <button
+              type="button"
+              className={
+                tool === "textbox"
+                  ? "cascade-tool-btn active"
+                  : "cascade-tool-btn"
+              }
+              onClick={() => setTool("textbox")}
+              aria-label="text box tool"
+              title="place static text"
+            >
+              {/* Capital T inside a box — distinguishes from the
+                  cascade-type tool which uses a plain T. */}
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
+                <rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+                <path
+                  d="M5 6 H11 M8 6 V11"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
             {/* Clear-poster action button. Not a tool toggle (doesn't get
                 .active), just an immediate action: drops all letters and
                 wipes drawing strokes. No confirmation — nothing has been
@@ -1463,7 +1643,7 @@ export function CascadeStage({
               // drawing — was previously letters-only, which meant a
               // pencil-only poster (drawn shapes with no typed letters)
               // couldn't be cleared via the X button.
-              disabled={letterCount === 0 && !hasDrawing}
+              disabled={letterCount === 0 && !hasDrawing && textBoxes.length === 0}
             >
               <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
                 <path
@@ -1543,6 +1723,79 @@ export function CascadeStage({
               {l.char}
             </span>
           ))}
+          {/* Placed text boxes — rendered as positioned <span>s so
+              html2canvas captures them automatically at save time.
+              data-textbox-id lets the move-tool pointer-down identify
+              the hit target without geometric hit-testing. Cursor is
+              move when the move tool is active (so users see it's
+              draggable) and default otherwise. */}
+          {textBoxes.map((b) => (
+            <span
+              key={b.id}
+              data-textbox-id={b.id}
+              className="cascade-textbox"
+              style={{
+                position: "absolute",
+                left: `${b.x}px`,
+                top: `${b.y}px`,
+                color: b.color,
+                fontFamily: `"${b.fontId}", var(--ui-georgian)`,
+                fontSize: `${b.fontSize}px`,
+                lineHeight: 1,
+                whiteSpace: "pre",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+                cursor: tool === "move" ? "move" : "default",
+                // pointer-events:auto so the move-tool can grab it; the
+                // stage's delegated pointerdown still fires via bubble.
+                pointerEvents: tool === "move" ? "auto" : "none",
+                touchAction: "none",
+              }}
+            >
+              {b.text}
+            </span>
+          ))}
+          {/* Pending textbox input — only visible while the user is
+              typing a brand-new box (right after clicking with the
+              textbox tool). Commits on Enter or blur with non-empty
+              content; cancels on Escape or empty blur. Positioned
+              absolutely at the click point. Auto-focuses on mount so
+              the user can start typing immediately. */}
+          {pendingTextBox ? (
+            <input
+              ref={pendingInputRef}
+              type="text"
+              autoFocus
+              dir="auto"
+              className="cascade-textbox-input"
+              data-html2canvas-ignore="true"
+              style={{
+                position: "absolute",
+                left: `${pendingTextBox.x}px`,
+                top: `${pendingTextBox.y}px`,
+                color: pendingTextBox.color,
+                fontFamily: `"${pendingTextBox.fontId}", var(--ui-georgian)`,
+                fontSize: `${pendingTextBox.fontSize}px`,
+                lineHeight: 1,
+                padding: 0,
+                margin: 0,
+                background: "transparent",
+                border: `1px dashed ${pendingTextBox.color}`,
+                outline: "none",
+                minWidth: "100px",
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitPendingTextBox(e.currentTarget.value);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setPendingTextBox(null);
+                }
+              }}
+              onBlur={(e) => commitPendingTextBox(e.currentTarget.value)}
+            />
+          ) : null}
           {/* Selection overlay: dashed bounding box + rotation handle.
               Rendered only in move mode for the currently-selected
               letter. The box stays in screen pixels (px) because the

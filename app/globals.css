@@ -1358,6 +1358,20 @@ p {
 .cascade-a4-stage[data-tool="type"] {
   cursor: url("/cursors/type.svg") 16 16, text;
 }
+.cascade-a4-stage[data-tool="textbox"] {
+  cursor: crosshair;
+}
+
+/* Placed text-box elements. position:absolute is set inline (per
+   instance, from the textBoxes state), this CSS just covers base
+   typography. The pending input shares some of these via the
+   .cascade-textbox-input selector below. */
+.cascade-textbox {
+  font-family: var(--ui-georgian);
+}
+.cascade-textbox-input {
+  font-family: var(--ui-georgian);
+}
 
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions
    match the stage; the buffer is at print resolution so strokes stay
