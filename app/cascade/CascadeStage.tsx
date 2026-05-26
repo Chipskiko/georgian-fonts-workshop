@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Matter from "matter-js";
 import type { FontEntry } from "@/lib/types";
 import { uploadPoster } from "../posterizer/actions";
@@ -406,6 +406,12 @@ export function CascadeStage({
     initialPointersDist: 1,
     initialFontSize: 64,
   });
+  // Tracks textbox ids placed in this session that haven't been
+  // post-render clamped yet. The pre-clamp in handlePointerDown uses
+  // an estimate; the layout effect reads the actual DOM bbox once
+  // the font has rendered and re-clamps if the box overflows the
+  // A4 canvas. Drained as boxes are processed.
+  const newlyPlacedTextBoxIdsRef = useRef<Set<number>>(new Set());
   // DOM ref map for textbox span elements — lets us read each box's
   // axis-aligned bounding rect when starting a rotation gesture
   // (we need the box's center in viewport coords to compute the
@@ -702,6 +708,50 @@ export function CascadeStage({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFontId]);
+
+  // OVERFLOW CONTINGENCY (post-render fine-tune): for every textbox in
+  // newlyPlacedTextBoxIdsRef (added by handlePointerDown's instant-
+  // place flow), measure the actual rendered bbox and re-clamp x/y
+  // so the box stays fully inside the A4 canvas. Runs in a layout
+  // effect so the adjustment happens BEFORE the browser paints the
+  // overflowing position — no visible flash. The pre-clamp in
+  // handlePointerDown uses an estimate that's often off for varied
+  // Georgian fonts; this layout effect is the authoritative clamp.
+  useLayoutEffect(() => {
+    const ids = newlyPlacedTextBoxIdsRef.current;
+    if (ids.size === 0) return;
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const scale = rect.width / A4_WIDTH;
+    if (!(scale > 0)) return;
+    const adjustments = new Map<number, { x: number; y: number }>();
+    for (const id of ids) {
+      const el = textBoxElemsRef.current.get(id);
+      if (!el) continue;
+      const br = el.getBoundingClientRect();
+      const bw = br.width / scale;
+      const bh = br.height / scale;
+      const box = textBoxes.find((b) => b.id === id);
+      if (!box) {
+        ids.delete(id);
+        continue;
+      }
+      const newX = Math.max(0, Math.min(A4_WIDTH - bw, box.x));
+      const newY = Math.max(0, Math.min(A4_HEIGHT - bh, box.y));
+      if (newX !== box.x || newY !== box.y) {
+        adjustments.set(id, { x: newX, y: newY });
+      }
+      ids.delete(id);
+    }
+    if (adjustments.size > 0) {
+      setTextBoxes((cur) =>
+        cur.map((b) => {
+          const a = adjustments.get(b.id);
+          return a ? { ...b, x: a.x, y: a.y } : b;
+        }),
+      );
+    }
+  }, [textBoxes]);
 
   // BUG FIX: switching to a non-textbox tool while a pending input
   // is open used to leave the input visible AND lose the typed text
@@ -1289,19 +1339,44 @@ export function CascadeStage({
       for (let i = 0; i < 5; i++) {
         placeholder += String.fromCharCode(0x10D0 + Math.floor(Math.random() * 33));
       }
+      // OVERFLOW CONTINGENCY: pre-clamp using a conservative width
+      // estimate (Georgian glyphs run ~0.9× fontSize wide; use 1.0
+      // for safety so the initial position is roughly correct before
+      // the post-render layout effect does the precise clamp). If
+      // even at fontSize 64 the text would overflow horizontally,
+      // shrink fontSize so the box fits across the canvas. Final
+      // precise clamping happens in the layout effect below which
+      // reads the actual rendered DOM bbox once the font is loaded.
+      let fontSize = 64;
+      const CHAR_W_RATIO = 1.0;
+      const LINE_H_RATIO = 1.1;
+      let estW = placeholder.length * fontSize * CHAR_W_RATIO;
+      const estH = fontSize * LINE_H_RATIO;
+      if (estW > A4_WIDTH - 8) {
+        fontSize = Math.max(12, Math.floor(((A4_WIDTH - 8) / placeholder.length) / CHAR_W_RATIO));
+        estW = placeholder.length * fontSize * CHAR_W_RATIO;
+      }
+      const clampedX = Math.max(0, Math.min(A4_WIDTH - estW, x));
+      const clampedY = Math.max(0, Math.min(A4_HEIGHT - estH, y));
       const newId = ++textBoxIdRef.current;
       setTextBoxes((cur) => [
         ...cur,
         {
           id: newId,
-          x, y,
+          x: clampedX,
+          y: clampedY,
           text: placeholder,
           fontId,
           color: fgRef.current,
-          fontSize: 64,
+          fontSize,
           rotation: 0,
         },
       ]);
+      // Schedule a post-render fine-tune: once React commits and the
+      // font has rendered, the textBoxes layout effect (below)
+      // measures the actual DOM bbox and re-clamps if our estimate
+      // was off (different fonts have different per-char widths).
+      newlyPlacedTextBoxIdsRef.current.add(newId);
       setSelectedTextBoxId(newId);
       // Clear letter selection so two overlays never show at once.
       if (selectedLetterId !== null) setSelectedLetterId(null);
@@ -1679,8 +1754,26 @@ export function CascadeStage({
         const id = textBoxDragRef.current.id;
         const offX = textBoxDragRef.current.offsetX;
         const offY = textBoxDragRef.current.offsetY;
+        // OVERFLOW CONTINGENCY: clamp drag target to keep the box's
+        // rendered bounds inside the A4 canvas. Read the box's actual
+        // DOM bbox so we can offset against width/height (these vary
+        // by text length × fontSize × font). For ROTATED boxes the
+        // axis-aligned bbox is wider; getBoundingClientRect handles
+        // this for us. Stage-local px/py vs the box's stage-local
+        // size determines the clamp limits.
+        const el = textBoxElemsRef.current.get(id);
+        let bw = 0, bh = 0;
+        if (el) {
+          const br = el.getBoundingClientRect();
+          bw = br.width / (scale || 1);
+          bh = br.height / (scale || 1);
+        }
+        const rawX = px - offX;
+        const rawY = py - offY;
+        const newX = Math.max(0, Math.min(A4_WIDTH - bw, rawX));
+        const newY = Math.max(0, Math.min(A4_HEIGHT - bh, rawY));
         setTextBoxes((cur) =>
-          cur.map((b) => (b.id === id ? { ...b, x: px - offX, y: py - offY } : b)),
+          cur.map((b) => (b.id === id ? { ...b, x: newX, y: newY } : b)),
         );
       }
       return;
