@@ -333,8 +333,22 @@ export function CascadeStage({
   // into textBoxes and pendingTextBox clears; on commit with empty
   // content the input vanishes without adding anything.
   const [textBoxes, setTextBoxes] = useState<TextBox[]>([]);
+  // Pending input state. `editingId` switches the commit behavior:
+  //   null   → create a new TextBox on Enter (place mode)
+  //   number → update the existing box with that id (edit mode);
+  //            empty commit DELETES it
+  // `initialText` pre-fills the input so editors see current text.
   const [pendingTextBox, setPendingTextBox] = useState<
-    null | { x: number; y: number; fontId: string; color: string; fontSize: number }
+    | null
+    | {
+        x: number;
+        y: number;
+        fontId: string;
+        color: string;
+        fontSize: number;
+        editingId: number | null;
+        initialText: string;
+      }
   >(null);
   const textBoxIdRef = useRef(0);
   const pendingInputRef = useRef<HTMLInputElement | null>(null);
@@ -360,6 +374,17 @@ export function CascadeStage({
     initialPointerAngle: number;
     initialBoxRotation: number;
   }>({ id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 });
+  // TextBox resize state. Same shape pattern as the rotate ref.
+  // Tracks the snapshot at handle-pointerdown so pointer-move can
+  // compute a scale factor (currentDistance / initialDistance) and
+  // apply it to the snapshotted initial fontSize.
+  const textBoxResizeRef = useRef<{
+    id: number | null;
+    centerX: number;
+    centerY: number;
+    initialDist: number;
+    initialFontSize: number;
+  }>({ id: null, centerX: 0, centerY: 0, initialDist: 1, initialFontSize: 12 });
   // DOM ref map for textbox span elements — lets us read each box's
   // axis-aligned bounding rect when starting a rotation gesture
   // (we need the box's center in viewport coords to compute the
@@ -588,6 +613,52 @@ export function CascadeStage({
     setTick((n) => (n + 1) % 1_000_000);
   }
 
+  // Backspace/Delete deletes the currently-selected textbox. Only
+  // fires when no other input has focus (so it doesn't hijack the
+  // soft keyboard's backspace during typing, the pending textbox
+  // input, the font picker, etc). Mounted only while there's a
+  // selection so we don't pay for a doc-level listener idly.
+  useEffect(() => {
+    if (selectedTextBoxId === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Backspace" && e.key !== "Delete") return;
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || (active as HTMLElement).isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      const id = selectedTextBoxId;
+      setTextBoxes((cur) => cur.filter((b) => b.id !== id));
+      setSelectedTextBoxId(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedTextBoxId]);
+
+  // Live styling: when a textbox is selected and the user changes the
+  // fg color, mirror the new color onto that box (instead of only
+  // affecting NEW placements). Same for font picker. Without these
+  // the user has to delete + retype to restyle a placed textbox.
+  useEffect(() => {
+    if (selectedTextBoxId === null) return;
+    const id = selectedTextBoxId;
+    setTextBoxes((cur) => cur.map((b) => (b.id === id ? { ...b, color: fg } : b)));
+    // Intentional: only fg in deps. selectedTextBoxId is captured at
+    // effect creation, refreshes when it changes. setTextBoxes is
+    // stable. We don't want this firing on selectedTextBoxId change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fg]);
+  useEffect(() => {
+    if (selectedTextBoxId === null || !currentFontId || currentFontId === RANDOM_FONT_ID) {
+      return;
+    }
+    const id = selectedTextBoxId;
+    setTextBoxes((cur) =>
+      cur.map((b) => (b.id === id ? { ...b, fontId: currentFontId } : b)),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFontId]);
+
   // BUG FIX: switching to a non-textbox tool while a pending input
   // is open used to leave the input visible AND lose the typed text
   // (the rendered input element survives tool changes since it
@@ -603,31 +674,68 @@ export function CascadeStage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
 
-  /** Commit (or discard) the pending textbox input. Called from the
-   *  input's Enter handler and onBlur. Non-empty content becomes a
-   *  new TextBox in the textBoxes list; empty content cleanly
-   *  cancels — no zero-content boxes left behind. */
+  /** Commit (or discard) the pending textbox input. Behaviour
+   *  depends on pendingTextBox.editingId:
+   *    null   → place mode. Non-empty text becomes a new TextBox;
+   *             empty input cleanly cancels (no zero-content box).
+   *    number → edit mode. Non-empty text updates the existing box's
+   *             content (keeping id/position/rotation/etc); empty
+   *             text DELETES the box (intentional UX — clearing all
+   *             content during edit is the natural way to remove). */
   function commitPendingTextBox(text: string) {
-    const trimmed = text.trim();
     if (!pendingTextBox) return;
-    if (trimmed.length > 0) {
-      setTextBoxes((cur) => [
-        ...cur,
-        {
-          id: ++textBoxIdRef.current,
-          x: pendingTextBox.x,
-          y: pendingTextBox.y,
-          text: trimmed,
-          fontId: pendingTextBox.fontId,
-          color: pendingTextBox.color,
-          fontSize: pendingTextBox.fontSize,
-          // Newly-placed boxes start upright; users rotate via the
-          // selection-overlay handle (rotate-textbox).
-          rotation: 0,
-        },
-      ]);
+    const trimmed = text.trim();
+    const { editingId } = pendingTextBox;
+    if (editingId !== null) {
+      if (trimmed.length > 0) {
+        setTextBoxes((cur) =>
+          cur.map((b) => (b.id === editingId ? { ...b, text: trimmed } : b)),
+        );
+      } else {
+        // Empty edit = delete. Also clear selection so the now-gone
+        // box's overlay doesn't dangle.
+        setTextBoxes((cur) => cur.filter((b) => b.id !== editingId));
+        if (selectedTextBoxId === editingId) setSelectedTextBoxId(null);
+      }
+    } else {
+      if (trimmed.length > 0) {
+        setTextBoxes((cur) => [
+          ...cur,
+          {
+            id: ++textBoxIdRef.current,
+            x: pendingTextBox.x,
+            y: pendingTextBox.y,
+            text: trimmed,
+            fontId: pendingTextBox.fontId,
+            color: pendingTextBox.color,
+            fontSize: pendingTextBox.fontSize,
+            // Newly-placed boxes start upright; users rotate via the
+            // selection-overlay handle (rotate-textbox).
+            rotation: 0,
+          },
+        ]);
+      }
     }
     setPendingTextBox(null);
+  }
+
+  /** Enter edit mode for an existing textbox. Snapshots the box's
+   *  current properties into pendingTextBox with editingId set so
+   *  the next commit updates (rather than creates). The original
+   *  box is HIDDEN from rendering while editing — see the textbox
+   *  map JSX which filters pending.editingId out. */
+  function handleStartEdit(boxId: number) {
+    const box = textBoxes.find((b) => b.id === boxId);
+    if (!box) return;
+    setPendingTextBox({
+      x: box.x,
+      y: box.y,
+      fontId: box.fontId,
+      color: box.color,
+      fontSize: box.fontSize,
+      editingId: box.id,
+      initialText: box.text,
+    });
   }
 
   async function ensureFontFaceLoaded(font: FontEntry) {
@@ -1120,6 +1228,8 @@ export function CascadeStage({
         x, y, fontId,
         color: fgRef.current,
         fontSize: 64,
+        editingId: null,
+        initialText: "",
       });
       // Don't capture/preventDefault — let click-events propagate
       // normally so the input that mounts can take focus.
@@ -1127,6 +1237,47 @@ export function CascadeStage({
     }
 
     if (tool === "move") {
+      // TEXTBOX DELETE BADGE: small × at the top-right of the selected
+      // textbox's overlay. Tap removes just that one box. Same delete
+      // outcome as the Backspace shortcut, but reachable on touch.
+      const delTarget = (e.target as HTMLElement | null);
+      if (delTarget?.dataset?.cascadeHandle === "delete-textbox") {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = Number(delTarget.dataset.textboxId);
+        setTextBoxes((cur) => cur.filter((b) => b.id !== id));
+        if (selectedTextBoxId === id) setSelectedTextBoxId(null);
+        return;
+      }
+      // TEXTBOX RESIZE HANDLE: bottom-right corner. Drag away from
+      // the box center to scale fontSize up; drag toward center to
+      // shrink. Snapshots initial pointer distance + fontSize so the
+      // ratio is stable across moves.
+      const rzTarget = (e.target as HTMLElement | null);
+      if (rzTarget?.dataset?.cascadeHandle === "resize-textbox") {
+        const id = Number(rzTarget.dataset.textboxId);
+        const box = textBoxes.find((b) => b.id === id);
+        const el = textBoxElemsRef.current.get(id);
+        if (box && el) {
+          e.preventDefault();
+          safeCapture(e);
+          const r = el.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const initialDist = Math.hypot(e.clientX - cx, e.clientY - cy);
+          textBoxResizeRef.current = {
+            id,
+            centerX: cx,
+            centerY: cy,
+            // Guard against accidental div-by-zero if the user
+            // somehow clicks dead-center of the handle on the
+            // box center (unlikely but cheap to defend).
+            initialDist: initialDist > 1 ? initialDist : 1,
+            initialFontSize: box.fontSize,
+          };
+          return;
+        }
+      }
       // TEXTBOX ROTATE HANDLE: clicking on the yellow rotate-ball that
       // orbits the selected textbox starts a rotation gesture. The
       // handle has data-cascade-handle="rotate-textbox" + data-textbox-id
@@ -1305,6 +1456,19 @@ export function CascadeStage({
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
     }
+    // TEXTBOX RESIZE: highest precedence in move mode. Pointer
+    // distance from box center / initial distance → scale factor for
+    // fontSize. Clamped to [12, 200] so the user can't accidentally
+    // make the text invisibly small or comically huge.
+    if (tool === "move" && textBoxResizeRef.current.id !== null) {
+      const r = textBoxResizeRef.current;
+      const curDist = Math.hypot(e.clientX - r.centerX, e.clientY - r.centerY);
+      const ratio = curDist / r.initialDist;
+      const newSize = Math.max(12, Math.min(200, r.initialFontSize * ratio));
+      const id = r.id;
+      setTextBoxes((cs) => cs.map((b) => (b.id === id ? { ...b, fontSize: newSize } : b)));
+      return;
+    }
     // TEXTBOX ROTATE: highest precedence in move mode. Computes the
     // delta between the initial pointer angle (snapshotted on handle
     // pointerdown) and the current angle, applies to the snapshotted
@@ -1455,6 +1619,11 @@ export function CascadeStage({
     // Drop this pointer from the tracked set. Done BEFORE the move-tool
     // branch so the 2-finger exit logic sees the post-removal count.
     pointersRef.current.delete(e.pointerId);
+    // TEXTBOX RESIZE end: clear the resize ref.
+    if (textBoxResizeRef.current.id !== null) {
+      textBoxResizeRef.current = { id: null, centerX: 0, centerY: 0, initialDist: 1, initialFontSize: 12 };
+      return;
+    }
     // TEXTBOX ROTATE end: clear the rotation ref so subsequent
     // pointer-moves don't accidentally continue rotating.
     if (textBoxRotateRef.current.id !== null) {
@@ -1862,6 +2031,10 @@ export function CascadeStage({
               move when the move tool is active (so users see it's
               draggable) and default otherwise. */}
           {textBoxes.map((b) => {
+            // Hide the box being edited — its content lives in the
+            // pending input until commit. Otherwise we'd render the
+            // box AND an input overlay on top of each other.
+            if (pendingTextBox?.editingId === b.id) return null;
             const isSelected = tool === "move" && selectedTextBoxId === b.id;
             return (
               <span
@@ -1872,6 +2045,15 @@ export function CascadeStage({
                   // bounding rect to find the rotation pivot center.
                   if (el) textBoxElemsRef.current.set(b.id, el);
                   else textBoxElemsRef.current.delete(b.id);
+                }}
+                onDoubleClick={(e) => {
+                  // Double-click in move mode = enter edit. Stop
+                  // propagation so it doesn't also trigger a 2nd
+                  // click → letter-deselect on the stage.
+                  if (tool !== "move") return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  handleStartEdit(b.id);
                 }}
                 data-textbox-id={b.id}
                 className={
@@ -1909,14 +2091,40 @@ export function CascadeStage({
                     ignore trick as the letter overlay so the yellow
                     ball doesn't leak into the saved JPG. */}
                 {isSelected ? (
-                  <span
-                    className="cascade-textbox-rotate-handle"
-                    data-cascade-handle="rotate-textbox"
-                    data-textbox-id={b.id}
-                    data-html2canvas-ignore="true"
-                    aria-label="rotate text box"
-                    role="button"
-                  />
+                  <>
+                    <span
+                      className="cascade-textbox-rotate-handle"
+                      data-cascade-handle="rotate-textbox"
+                      data-textbox-id={b.id}
+                      data-html2canvas-ignore="true"
+                      aria-label="rotate text box"
+                      role="button"
+                    />
+                    {/* Resize handle — bottom-right corner. Drag away
+                        from center to grow, toward center to shrink.
+                        Same color/border pattern as the rotate ball. */}
+                    <span
+                      className="cascade-textbox-resize-handle"
+                      data-cascade-handle="resize-textbox"
+                      data-textbox-id={b.id}
+                      data-html2canvas-ignore="true"
+                      aria-label="resize text box"
+                      role="button"
+                    />
+                    {/* Delete badge — small × at top-right. Tap
+                        removes just this textbox (same outcome as
+                        Backspace key shortcut). */}
+                    <span
+                      className="cascade-textbox-delete-badge"
+                      data-cascade-handle="delete-textbox"
+                      data-textbox-id={b.id}
+                      data-html2canvas-ignore="true"
+                      aria-label="delete text box"
+                      role="button"
+                    >
+                      ✕
+                    </span>
+                  </>
                 ) : null}
               </span>
             );
@@ -1929,10 +2137,20 @@ export function CascadeStage({
               the user can start typing immediately. */}
           {pendingTextBox ? (
             <input
+              // key={editingId or "new"} forces React to REMOUNT the
+              // input whenever we switch between place-mode / edit-
+              // mode / edit-of-different-box, so defaultValue applies
+              // correctly (defaultValue is only read on mount).
+              // Without this, double-clicking a second box mid-edit
+              // would carry the first box's typed text over.
+              key={pendingTextBox.editingId ?? "new"}
               ref={pendingInputRef}
               type="text"
               autoFocus
               dir="auto"
+              // Prefill with existing text in edit mode; empty in
+              // place mode (initialText is "" then).
+              defaultValue={pendingTextBox.initialText}
               className="cascade-textbox-input"
               data-html2canvas-ignore="true"
               style={{
@@ -1956,6 +2174,9 @@ export function CascadeStage({
                   commitPendingTextBox(e.currentTarget.value);
                 } else if (e.key === "Escape") {
                   e.preventDefault();
+                  // Escape in EDIT mode = revert (don't commit edits).
+                  // Escape in PLACE mode = cancel new box (current
+                  // behaviour). Both just clear the pending state.
                   setPendingTextBox(null);
                 }
               }}

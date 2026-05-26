@@ -1411,6 +1411,55 @@ p {
   cursor: grabbing;
 }
 
+/* Resize handle — bottom-right corner of the bbox. Drag away from
+   center to grow fontSize, toward center to shrink. Same border/
+   color pattern as the rotate ball but square so the user can
+   visually distinguish "rotation gesture" from "resize gesture". */
+.cascade-textbox-resize-handle {
+  position: absolute;
+  bottom: -8px;
+  right: -8px;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #111;
+  background: currentColor;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* Delete badge — small × at top-right of the bbox. Tap removes
+   just this textbox. Same Backspace shortcut handles the same job
+   for desktop, this is the touch-reachable equivalent. */
+.cascade-textbox-delete-badge {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid #111;
+  background: var(--bg);
+  color: #111;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Slight font weight so the × is visually weighty enough at small
+     size — otherwise it gets lost against the badge background. */
+  font-weight: 700;
+}
+.cascade-textbox-delete-badge:hover {
+  background: #111;
+  color: var(--bg);
+}
+
 /* Drawing canvas sits inside the stage, behind letters. CSS dimensions
    match the stage; the buffer is at print resolution so strokes stay
    crisp when html2canvas-pro scales the snapshot up ~6x. */
