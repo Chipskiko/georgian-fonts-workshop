@@ -2461,20 +2461,19 @@ export function CascadeStage({
                   whiteSpace: "pre",
                   userSelect: "none",
                   WebkitUserSelect: "none",
-                  // Hover cursor signals what action this textbox
-                  // supports under the current tool:
-                  //   move tool  → drag handle (move icon)
-                  //   textbox    → I-beam (click/dblclick edits text)
-                  //   other      → default arrow (read-only)
-                  // Stage cursor (crosshair in textbox mode) shows
-                  // through when hovering empty space — the I-beam
-                  // only appears specifically over an existing box.
+                  // Hover cursor: I-beam in BOTH move and textbox
+                  // tools to signal "double-click to edit text" —
+                  // matches Figma/Sketch/Illustrator UX where the
+                  // I-beam over a text element advertises edit-on-
+                  // dblclick. Drag still works (cursor doesn't
+                  // gate behavior); the move cursor reappears via
+                  // the stage's tool-specific cursor when hovering
+                  // empty space. Non-edit tools fall back to the
+                  // default arrow.
                   cursor:
-                    tool === "move"
-                      ? "move"
-                      : tool === "textbox"
-                        ? "text"
-                        : "default",
+                    tool === "move" || tool === "textbox"
+                      ? "text"
+                      : "default",
                   // pointer-events:auto in BOTH move and textbox tools
                   // so the per-textbox handlers above (select on
                   // pointerdown in textbox tool; dblclick to edit)
