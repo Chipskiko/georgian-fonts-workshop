@@ -718,65 +718,38 @@ export function CascadeStage({
   // handlePointerDown uses an estimate that's often off for varied
   // Georgian fonts; this layout effect is the authoritative clamp.
   useLayoutEffect(() => {
-    // Iterate ALL textboxes (not just newly-placed) so edits that
-    // extend the text past canvas bounds also get clamped/shrunk.
-    // The newly-placed ref isn't read anymore — it's left around as
-    // a no-op so future logic can hook in if needed. The effect
-    // terminates: once a box fits, the shrink branch doesn't fire,
-    // adjustments map is empty, setTextBoxes isn't called, no re-
-    // render → no loop.
+    // Illustrator-style: never auto-shrink fontSize on overflow. The
+    // user picked the size; we respect it. The edit input is width-
+    // capped (see input style below) so the user simply can't type
+    // characters that would extend past the canvas — the input stops
+    // accepting input at the wall. This effect now ONLY clamps the
+    // box's x/y position so the rendered bbox stays inside the canvas
+    // (e.g., if the text was edited longer and pushed past the edge,
+    // we shift it back). FontSize is left alone.
     if (textBoxes.length === 0) return;
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
     const scale = rect.width / A4_WIDTH;
     if (!(scale > 0)) return;
-    const limitW = A4_WIDTH - 8;
-    const adjustments = new Map<number, { x: number; y: number; fontSize?: number }>();
+    const adjustments = new Map<number, { x: number; y: number }>();
     for (const box of textBoxes) {
       const el = textBoxElemsRef.current.get(box.id);
       if (!el) continue;
-      const br = el.getBoundingClientRect();
-      const bw = br.width / scale;
-      const bh = br.height / scale;
-      let nextX = box.x;
-      let nextY = box.y;
-      let nextFontSize = box.fontSize;
-      if (bw > limitW) {
-        // Text wider than canvas. Shrink fontSize so it fits, with a
-        // 0.9 buffer because fontSize→width isn't perfectly linear
-        // for all Georgian display fonts. Pin x to 0 since the
-        // shrunken box should span (nearly) the full width.
-        const shrinkRatio = (limitW / bw) * 0.9;
-        nextFontSize = Math.max(12, Math.floor(box.fontSize * shrinkRatio));
-        nextX = 0;
-        const estH = bh * (nextFontSize / box.fontSize);
-        nextY = Math.max(0, Math.min(A4_HEIGHT - estH, box.y));
-      } else {
-        nextX = Math.max(0, Math.min(A4_WIDTH - bw, box.x));
-        nextY = Math.max(0, Math.min(A4_HEIGHT - bh, box.y));
-      }
-      const sameX = nextX === box.x;
-      const sameY = nextY === box.y;
-      const sameSize = nextFontSize === box.fontSize;
-      if (!sameX || !sameY || !sameSize) {
-        adjustments.set(box.id, {
-          x: nextX,
-          y: nextY,
-          ...(sameSize ? {} : { fontSize: nextFontSize }),
-        });
+      // Use clientWidth/Height (unrotated layout box) for the clamp
+      // so rotation doesn't artificially inflate the constraint.
+      const bw = el.clientWidth;
+      const bh = el.clientHeight;
+      const nextX = Math.max(0, Math.min(Math.max(0, A4_WIDTH - bw), box.x));
+      const nextY = Math.max(0, Math.min(Math.max(0, A4_HEIGHT - bh), box.y));
+      if (nextX !== box.x || nextY !== box.y) {
+        adjustments.set(box.id, { x: nextX, y: nextY });
       }
     }
     if (adjustments.size > 0) {
       setTextBoxes((cur) =>
         cur.map((b) => {
           const a = adjustments.get(b.id);
-          if (!a) return b;
-          return {
-            ...b,
-            x: a.x,
-            y: a.y,
-            ...(a.fontSize !== undefined ? { fontSize: a.fontSize } : {}),
-          };
+          return a ? { ...b, x: a.x, y: a.y } : b;
         }),
       );
     }
@@ -2645,6 +2618,12 @@ export function CascadeStage({
                 left: `${pendingTextBox.x}px`,
                 top: `${pendingTextBox.y}px`,
                 color: pendingTextBox.color,
+                // High-contrast caret-color (dark) so the blinking
+                // caret stays visible even when text color matches
+                // the poster bg (yellow text on yellow bg the caret
+                // would otherwise vanish). Matches the dark border
+                // pattern used by corner handles + delete badge.
+                caretColor: "#111",
                 fontFamily: `"${pendingTextBox.fontId}", var(--ui-georgian)`,
                 fontSize: `${pendingTextBox.fontSize}px`,
                 lineHeight: 1,
@@ -2654,6 +2633,12 @@ export function CascadeStage({
                 border: `1px dashed ${pendingTextBox.color}`,
                 outline: "none",
                 minWidth: "100px",
+                // Cap input width to canvas-remaining-width so
+                // typing can't extend the box past the canvas right
+                // edge. Illustrator-style: when the input hits the
+                // wall the user simply can't type more chars (input
+                // stops accepting).
+                maxWidth: `${Math.max(40, A4_WIDTH - pendingTextBox.x - 2)}px`,
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -2665,6 +2650,37 @@ export function CascadeStage({
                   // Escape in PLACE mode = cancel new box (current
                   // behaviour). Both just clear the pending state.
                   setPendingTextBox(null);
+                  return;
+                }
+                // QWERTY → Georgian fallback. Mirrors the cascade
+                // keyboard so a user on a Latin layout can type
+                // Georgian chars without switching keyboards. Only
+                // single-char keys are intercepted (not Backspace,
+                // arrow keys, etc.). Insert the Georgian glyph at
+                // the caret position; let the browser handle the
+                // rest of the input event.
+                if (
+                  e.key.length === 1 &&
+                  !e.ctrlKey &&
+                  !e.metaKey &&
+                  !e.altKey
+                ) {
+                  const mapped = QWERTY_TO_GEORGIAN[e.key.toLowerCase()];
+                  if (mapped) {
+                    e.preventDefault();
+                    const input = e.currentTarget;
+                    const start = input.selectionStart ?? input.value.length;
+                    const end = input.selectionEnd ?? input.value.length;
+                    const before = input.value.slice(0, start);
+                    const after = input.value.slice(end);
+                    const next = before + mapped + after;
+                    input.value = next;
+                    const caret = start + mapped.length;
+                    input.setSelectionRange(caret, caret);
+                    // Fire input event so any onChange-style listeners
+                    // (none here, but defensive) get the new value.
+                    input.dispatchEvent(new Event("input", { bubbles: true }));
+                  }
                 }
               }}
               onBlur={(e) => commitPendingTextBox(e.currentTarget.value)}
