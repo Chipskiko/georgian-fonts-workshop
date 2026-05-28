@@ -54,6 +54,15 @@ const POLL_INTERVAL_MS = 30_000;
 const DRAW_SCALE = SAVE_PX_W / A4_WIDTH;
 const PENCIL_WIDTH_CSS = 3; // CSS px on screen
 const ERASER_RADIUS_CSS = 14; // CSS px on screen
+// Double-tap detection thresholds for textbox edit-on-dblclick. Native
+// dblclick is unreliable on touch (iOS often skips it for tap+tap,
+// Android does too); we implement a manual detector via pointerdown
+// timing. 350ms is the human-comfortable threshold for "intentional
+// double tap" (faster than typical idle re-tap, slower than mouse
+// dblclick). 28px ≈ a fat-finger tap target — taps slightly off the
+// first hit point still count as a double-tap.
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_PX = 28;
 
 type Tool = "move" | "pencil" | "eraser" | "type" | "textbox";
 
@@ -358,6 +367,20 @@ export function CascadeStage({
   // the selection overlay (dashed bbox + rotate handle) renders around it.
   // Mirrors the selectedLetterId pattern for parity with letters.
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<number | null>(null);
+  // Manual double-tap detector for textbox edit-on-dblclick. Native
+  // dblclick is unreliable on touch — iOS won't fire it for tap+tap,
+  // Android sometimes fires only for tap+long-press, and small finger
+  // displacement between taps often disqualifies the gesture. We track
+  // each pointerdown on a textbox span here; if a second pointerdown
+  // arrives on the SAME box within DOUBLE_TAP_MS and ≤ DOUBLE_TAP_PX
+  // of the first, we treat it as a double-tap and enter edit. Resets
+  // on box mismatch, timeout, or after edit fires.
+  const lastTextBoxTapRef = useRef<{
+    id: number;
+    time: number;
+    x: number;
+    y: number;
+  } | null>(null);
   // TextBox drag state — analogous to dragRef for letters. Stored
   // in a ref so the document-level pointer-move handler doesn't pay
   // re-render cost while dragging.
@@ -2397,23 +2420,53 @@ export function CascadeStage({
                   if (el) textBoxElemsRef.current.set(b.id, el);
                   else textBoxElemsRef.current.delete(b.id);
                 }}
-                // In textbox tool, stop the pointerdown from bubbling
-                // to the stage so clicking on an existing textbox
-                // SELECTS it instead of placing a new box on top of
-                // it. (In move mode the stage handler already owns
-                // selection via its textbox-drag branch.)
+                // Manual double-tap detection (touch-friendly) +
+                // textbox-tool select. Native dblclick is unreliable
+                // on iOS/Android — we track time + position of the
+                // previous tap on this box and treat a quick re-tap
+                // as a double-tap. Mouse double-clicks still fire
+                // the native onDoubleClick below as a redundant
+                // path (so desktop never depends on the manual
+                // detector and vice-versa).
                 onPointerDown={(e) => {
-                  if (tool !== "textbox") return;
-                  e.stopPropagation();
-                  setSelectedTextBoxId(b.id);
-                  if (selectedLetterId !== null) setSelectedLetterId(null);
+                  if (tool !== "move" && tool !== "textbox") return;
+                  const now = e.timeStamp || performance.now();
+                  const prev = lastTextBoxTapRef.current;
+                  const isDoubleTap =
+                    prev !== null &&
+                    prev.id === b.id &&
+                    now - prev.time <= DOUBLE_TAP_MS &&
+                    Math.hypot(e.clientX - prev.x, e.clientY - prev.y) <=
+                      DOUBLE_TAP_PX;
+                  if (isDoubleTap) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    lastTextBoxTapRef.current = null;
+                    if (tool === "textbox") setTool("move");
+                    handleStartEdit(b.id);
+                    return;
+                  }
+                  // First (or stale) tap — record for next check.
+                  lastTextBoxTapRef.current = {
+                    id: b.id,
+                    time: now,
+                    x: e.clientX,
+                    y: e.clientY,
+                  };
+                  // textbox-tool select-on-click path (unchanged):
+                  // stop bubble so the stage handler doesn't also
+                  // place a new box at this point.
+                  if (tool === "textbox") {
+                    e.stopPropagation();
+                    setSelectedTextBoxId(b.id);
+                    if (selectedLetterId !== null) setSelectedLetterId(null);
+                  }
                 }}
                 onDoubleClick={(e) => {
-                  // Double-click in move mode = enter edit.
-                  // Double-click in textbox mode = auto-switch to
-                  // move + enter edit (matches user expectation that
-                  // the placeholder text is editable immediately
-                  // after placement without a manual tool switch).
+                  // Desktop fallback. The manual pointerdown detector
+                  // above fires first on mouse too, so this branch is
+                  // usually a no-op (handleStartEdit only sets state,
+                  // calling it twice in the same tick is harmless).
                   if (tool !== "move" && tool !== "textbox") return;
                   e.stopPropagation();
                   e.preventDefault();
@@ -2513,7 +2566,45 @@ export function CascadeStage({
                         // slow devices the cleanup might race with the
                         // dblclick handler entering edit mode and a
                         // stale rotate ref could fire on the next move.
+                        // Touch double-tap detector — same logic as
+                        // the textbox span's onPointerDown. On small
+                        // textboxes the halos cover most of the
+                        // visible surface, so two finger taps often
+                        // land here instead of the span; without this
+                        // the user can't enter edit on small boxes
+                        // via touch.
+                        onPointerDown={(e) => {
+                          if (tool !== "move") return;
+                          const now = e.timeStamp || performance.now();
+                          const prev = lastTextBoxTapRef.current;
+                          const isDoubleTap =
+                            prev !== null &&
+                            prev.id === b.id &&
+                            now - prev.time <= DOUBLE_TAP_MS &&
+                            Math.hypot(e.clientX - prev.x, e.clientY - prev.y) <=
+                              DOUBLE_TAP_PX;
+                          if (isDoubleTap) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            lastTextBoxTapRef.current = null;
+                            // Clear any in-progress rotate gesture so
+                            // it doesn't carry through the edit entry.
+                            textBoxRotateRef.current = { id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 };
+                            handleStartEdit(b.id);
+                            return;
+                          }
+                          lastTextBoxTapRef.current = {
+                            id: b.id,
+                            time: now,
+                            x: e.clientX,
+                            y: e.clientY,
+                          };
+                          // Don't stopPropagation — let the stage
+                          // handler set up the rotate gesture for
+                          // single-tap+drag.
+                        }}
                         onDoubleClick={(e) => {
+                          // Desktop fallback (mouse double-click).
                           if (tool !== "move") return;
                           e.stopPropagation();
                           e.preventDefault();
