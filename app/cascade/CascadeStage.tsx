@@ -367,6 +367,13 @@ export function CascadeStage({
   // the selection overlay (dashed bbox + rotate handle) renders around it.
   // Mirrors the selectedLetterId pattern for parity with letters.
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<number | null>(null);
+  // Hidden mirror span for the pending input — measured to size the
+  // input element to its content width. Without this the <input>
+  // would render with its default minWidth and stay that wide as the
+  // user types (Illustrator-style auto-grow needs the input to size
+  // to content). Mirror has the same font + size + line-height as
+  // the input so its offsetWidth equals the visible text width.
+  const pendingMirrorRef = useRef<HTMLSpanElement | null>(null);
   // Manual double-tap detector for textbox edit-on-dblclick. Native
   // dblclick is unreliable on touch — iOS won't fire it for tap+tap,
   // Android sometimes fires only for tap+long-press, and small finger
@@ -2689,6 +2696,31 @@ export function CascadeStage({
               absolutely at the click point. Auto-focuses on mount so
               the user can start typing immediately. */}
           {pendingTextBox ? (
+            <>
+              {/* Hidden mirror span — sized by the typed text, used
+                  to drive the input's width on every keystroke. Same
+                  font / size / line-height as the input so its
+                  offsetWidth equals the visible text width. */}
+              <span
+                ref={pendingMirrorRef}
+                aria-hidden="true"
+                data-html2canvas-ignore="true"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  visibility: "hidden",
+                  pointerEvents: "none",
+                  whiteSpace: "pre",
+                  fontFamily: `"${pendingTextBox.fontId}", var(--ui-georgian)`,
+                  fontSize: `${pendingTextBox.fontSize}px`,
+                  lineHeight: 1,
+                  padding: 0,
+                  margin: 0,
+                }}
+              >
+                {pendingTextBox.initialText || " "}
+              </span>
             <input
               // key={editingId or "new"} forces React to REMOUNT the
               // input whenever we switch between place-mode / edit-
@@ -2697,7 +2729,16 @@ export function CascadeStage({
               // Without this, double-clicking a second box mid-edit
               // would carry the first box's typed text over.
               key={pendingTextBox.editingId ?? "new"}
-              ref={pendingInputRef}
+              ref={(el) => {
+                pendingInputRef.current = el;
+                if (el && pendingTextBox && pendingMirrorRef.current) {
+                  // Initial sizing on mount: mirror already has
+                  // initialText, so its offsetWidth is correct.
+                  const mw = pendingMirrorRef.current.offsetWidth;
+                  const max = Math.max(20, A4_WIDTH - pendingTextBox.x - 2);
+                  el.style.width = `${Math.min(max, Math.max(8, mw + 4))}px`;
+                }
+              }}
               type="text"
               autoFocus
               dir="auto"
@@ -2711,12 +2752,10 @@ export function CascadeStage({
                 left: `${pendingTextBox.x}px`,
                 top: `${pendingTextBox.y}px`,
                 color: pendingTextBox.color,
-                // High-contrast caret-color (dark) so the blinking
-                // caret stays visible even when text color matches
-                // the poster bg (yellow text on yellow bg the caret
-                // would otherwise vanish). Matches the dark border
-                // pattern used by corner handles + delete badge.
-                caretColor: "#111",
+                // Caret matches the text color so the blinking line
+                // looks like part of the box's own typography rather
+                // than a black system caret stamped on top.
+                caretColor: pendingTextBox.color,
                 fontFamily: `"${pendingTextBox.fontId}", var(--ui-georgian)`,
                 fontSize: `${pendingTextBox.fontSize}px`,
                 lineHeight: 1,
@@ -2725,13 +2764,23 @@ export function CascadeStage({
                 background: "transparent",
                 border: `1px dashed ${pendingTextBox.color}`,
                 outline: "none",
-                minWidth: "100px",
-                // Cap input width to canvas-remaining-width so
-                // typing can't extend the box past the canvas right
-                // edge. Illustrator-style: when the input hits the
-                // wall the user simply can't type more chars (input
-                // stops accepting).
+                // Cap at canvas-remaining-width as a safety; the
+                // actual width is set imperatively (above and via
+                // onInput) from the mirror's offsetWidth so the input
+                // grows/shrinks with the typed text. No minWidth so
+                // empty boxes don't look fixed-wide.
                 maxWidth: `${Math.max(40, A4_WIDTH - pendingTextBox.x - 2)}px`,
+              }}
+              onInput={(e) => {
+                // After each keystroke, mirror the input's value into
+                // the hidden mirror span and use its rendered width
+                // to size the input. Auto-grow / auto-shrink.
+                const inp = e.currentTarget;
+                const mir = pendingMirrorRef.current;
+                if (!mir) return;
+                mir.textContent = inp.value || " ";
+                const max = Math.max(20, A4_WIDTH - pendingTextBox.x - 2);
+                inp.style.width = `${Math.min(max, Math.max(8, mir.offsetWidth + 4))}px`;
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -2778,6 +2827,7 @@ export function CascadeStage({
               }}
               onBlur={(e) => commitPendingTextBox(e.currentTarget.value)}
             />
+            </>
           ) : null}
           {/* Selection overlay: dashed bounding box + rotation handle.
               Rendered only in move mode for the currently-selected
