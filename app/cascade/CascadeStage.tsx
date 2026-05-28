@@ -358,6 +358,70 @@ export function CascadeStage({
   // the selection overlay (dashed bbox + rotate handle) renders around it.
   // Mirrors the selectedLetterId pattern for parity with letters.
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<number | null>(null);
+  // ID of the textbox currently in edit mode (contentEditable open).
+  // When non-null, that textbox's span becomes contentEditable so the
+  // user can type directly into it with the browser-native caret. The
+  // selection overlay also shows (with corner halos pointer-events:
+  // none during edit so clicks within the text place the caret, not
+  // start a resize). Set when the user enters edit (via tool=textbox
+  // canvas click on empty space → new+edit, OR via dblclick on an
+  // existing textbox). Cleared on commit (blur or Escape).
+  const [editingTextBoxId, setEditingTextBoxId] = useState<number | null>(null);
+  // Ref to the contentEditable span so we can focus it imperatively
+  // on edit-mode entry and read its textContent on commit. Set via
+  // the ref callback in the textbox JSX when isEditing is true.
+  const editingTextBoxRef = useRef<HTMLSpanElement | null>(null);
+  // On enter-edit:
+  //   1. Seed the span's textContent imperatively with the box's
+  //      current text (React renders nothing inside the editable
+  //      span — see JSX below — so the DOM stays user-owned).
+  //   2. Focus + place the caret at the END of the text.
+  //   3. Attach a NATIVE focusout listener as the commit trigger.
+  //      React's onBlur is unreliable on contentEditable spans in
+  //      some browser/React combos (the synthetic onBlur doesn't
+  //      fire on programmatic or cross-element focus shifts), so
+  //      we listen for native focusout which always fires.
+  // All done in useEffect so React has committed contentEditable=true
+  // before we focus / wire listeners.
+  useEffect(() => {
+    if (editingTextBoxId === null) return;
+    const el = editingTextBoxRef.current;
+    if (!el) return;
+    // Seed text from the committed state. Empty for brand-new boxes.
+    const id = editingTextBoxId;
+    const box = textBoxes.find((b) => b.id === id);
+    if (box && el.textContent !== box.text) {
+      el.textContent = box.text;
+    }
+    el.focus();
+    // Caret at end. For empty content, this places caret at position 0.
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    // Native focusout = commit. We read textContent ourselves (state
+    // wasn't being updated during typing — see onInput comment).
+    const onFocusOut = () => {
+      const t = el.textContent ?? "";
+      const trimmed = t.trim();
+      if (trimmed.length === 0) {
+        setTextBoxes((cur) => cur.filter((x) => x.id !== id));
+        setSelectedTextBoxId((cur) => (cur === id ? null : cur));
+      } else {
+        setTextBoxes((cur) => cur.map((x) => (x.id === id ? { ...x, text: t } : x)));
+      }
+      setEditingTextBoxId(null);
+    };
+    el.addEventListener("focusout", onFocusOut);
+    return () => {
+      el.removeEventListener("focusout", onFocusOut);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingTextBoxId]);
   // TextBox drag state — analogous to dragRef for letters. Stored
   // in a ref so the document-level pointer-move handler doesn't pay
   // re-render cost while dragging.
@@ -755,13 +819,9 @@ export function CascadeStage({
     }
   }, [textBoxes]);
 
-  // Force-commit any in-progress NEW textbox placement when the user
-  // switches away from the textbox tool. Only applies to legacy
-  // "new placement" pendings (editingId === null). Edit-mode pendings
-  // (opened via dblclick) must survive tool changes — in particular
-  // the dblclick-from-textbox flow auto-switches to move tool while
-  // opening an edit input; auto-committing it on that switch would
-  // unmount the input before the user can type.
+  // Legacy useEffect kept as a defensive no-op for any lingering
+  // pendingTextBox state. The new contentEditable flow doesn't use
+  // pendingTextBox; this branch can be removed in a future pass.
   useEffect(() => {
     if (
       tool !== "textbox" &&
@@ -771,6 +831,17 @@ export function CascadeStage({
     ) {
       commitPendingTextBox(pendingInputRef.current.value);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool]);
+  // On ANY tool change OR pencil/eraser/X tool button click, commit
+  // any in-progress contentEditable edit by blurring its span. The
+  // span's focusout listener (above) then reads textContent and
+  // persists it (or deletes the box if empty). Native focus + blur
+  // is more reliable than React's synthetic onBlur on contentEditable.
+  useEffect(() => {
+    if (editingTextBoxId === null) return;
+    const el = editingTextBoxRef.current;
+    if (el && document.activeElement === el) el.blur();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
 
@@ -1308,26 +1379,32 @@ export function CascadeStage({
     // 2-finger gesture detection below.
     pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
-    // TEXTBOX TOOL: clicking anywhere INSTANTLY places a new textbox
-    // with a random 5-letter Georgian placeholder. The user can then
-    // switch to the move tool to drag/rotate/resize, or double-click
-    // the box in move mode to edit its text. Each canvas click in
-    // textbox mode places another box and selects it (deselecting the
-    // previous one). The placeholder gives immediate visual feedback
-    // — the user sees something the moment they click, instead of
-    // having to type+Enter to commit a hidden input.
+    // TEXTBOX TOOL: Illustrator-style — clicking empty stage places
+    // an empty textbox at that point and immediately enters edit mode
+    // with a blinking caret. The user types directly into the textbox
+    // span (contentEditable). The box autosizes with the typed text
+    // and wraps at the canvas right edge via max-width. Click outside
+    // / Escape commits + exits; commit with empty text deletes the
+    // box entirely (no orphaned empties).
+    //
+    // Clicking on an EXISTING textbox in textbox tool enters edit on
+    // THAT box rather than placing a new one — the per-textbox
+    // onPointerDown handler in the JSX traps that case before this
+    // branch sees the click.
     if (tool === "textbox") {
       const rect = stageRef.current?.getBoundingClientRect();
       if (!rect) return;
-      // If a stale pending edit-input is open (from a dblclick mid-
-      // flight), commit it first so its content doesn't get lost when
-      // the user clicks elsewhere to place a new box.
-      if (pendingTextBox && pendingInputRef.current) {
-        commitPendingTextBox(pendingInputRef.current.value);
+      // If a different textbox is currently being edited, commit it
+      // first by blurring its span. The focusout listener inside the
+      // editing useEffect synchronously fires and persists / deletes
+      // (if empty). Without this, the next placement races with the
+      // in-progress edit and one of them gets stomped.
+      if (editingTextBoxId !== null && editingTextBoxRef.current) {
+        editingTextBoxRef.current.blur();
       }
-      // Convert from viewport coords to stage-local. On mobile the
-      // stage uses transform:scale, so divide by the rendered scale
-      // to land in the layout-box coord space the textBoxes use.
+      // Convert viewport coords → stage-local. The stage uses CSS
+      // transform: scale to be responsive; the textbox is positioned
+      // in unscaled stage coords so we undo the scale.
       const scale = rect.width / A4_WIDTH;
       const x = (e.clientX - rect.left) / (scale || 1);
       const y = (e.clientY - rect.top) / (scale || 1);
@@ -1339,52 +1416,25 @@ export function CascadeStage({
         : allFonts.length > 0
           ? allFonts[Math.floor(Math.random() * allFonts.length)].id
           : "serif";
-      // 5 random Mkhedruli letters (U+10D0–U+10F0, 33 chars). Gives
-      // immediate visual feedback so the user sees the box landed.
-      let placeholder = "";
-      for (let i = 0; i < 5; i++) {
-        placeholder += String.fromCharCode(0x10D0 + Math.floor(Math.random() * 33));
-      }
-      // OVERFLOW CONTINGENCY: pre-clamp using a conservative width
-      // estimate (Georgian glyphs run ~0.9× fontSize wide; use 1.0
-      // for safety so the initial position is roughly correct before
-      // the post-render layout effect does the precise clamp). If
-      // even at fontSize 64 the text would overflow horizontally,
-      // shrink fontSize so the box fits across the canvas. Final
-      // precise clamping happens in the layout effect below which
-      // reads the actual rendered DOM bbox once the font is loaded.
-      let fontSize = 64;
-      const CHAR_W_RATIO = 1.0;
-      const LINE_H_RATIO = 1.1;
-      let estW = placeholder.length * fontSize * CHAR_W_RATIO;
-      const estH = fontSize * LINE_H_RATIO;
-      if (estW > A4_WIDTH - 8) {
-        fontSize = Math.max(12, Math.floor(((A4_WIDTH - 8) / placeholder.length) / CHAR_W_RATIO));
-        estW = placeholder.length * fontSize * CHAR_W_RATIO;
-      }
-      const clampedX = Math.max(0, Math.min(A4_WIDTH - estW, x));
-      const clampedY = Math.max(0, Math.min(A4_HEIGHT - estH, y));
       const newId = ++textBoxIdRef.current;
       setTextBoxes((cur) => [
         ...cur,
         {
           id: newId,
-          x: clampedX,
-          y: clampedY,
-          text: placeholder,
+          x,
+          y,
+          text: "",
           fontId,
           color: fgRef.current,
-          fontSize,
+          fontSize: 64,
           rotation: 0,
         },
       ]);
-      // Schedule a post-render fine-tune: once React commits and the
-      // font has rendered, the textBoxes layout effect (below)
-      // measures the actual DOM bbox and re-clamps if our estimate
-      // was off (different fonts have different per-char widths).
-      newlyPlacedTextBoxIdsRef.current.add(newId);
+      // Enter edit mode immediately. The contentEditable span auto-
+      // focuses on mount (see TextBox JSX) so the caret blinks right
+      // where the user clicked.
+      setEditingTextBoxId(newId);
       setSelectedTextBoxId(newId);
-      // Clear letter selection so two overlays never show at once.
       if (selectedLetterId !== null) setSelectedLetterId(null);
       return;
     }
@@ -2373,10 +2423,6 @@ export function CascadeStage({
               move when the move tool is active (so users see it's
               draggable) and default otherwise. */}
           {textBoxes.map((b) => {
-            // Hide the box being edited — its content lives in the
-            // pending input until commit. Otherwise we'd render the
-            // box AND an input overlay on top of each other.
-            if (pendingTextBox?.editingId === b.id) return null;
             // Selection overlay is visible in BOTH move and textbox
             // tools. In move mode the corners/halos are interactive
             // (resize/rotate). In textbox mode they're visible but
@@ -2385,15 +2431,51 @@ export function CascadeStage({
             const isSelected =
               (tool === "move" || tool === "textbox") &&
               selectedTextBoxId === b.id;
+            const isEditing = editingTextBoxId === b.id;
             return (
               <span
-                key={b.id}
+                // Dual key — when isEditing toggles, force a remount
+                // so React's reconciler starts from a clean span.
+                // Without this, the user-typed contentEditable DOM
+                // and the React-rendered {b.text} would coexist
+                // (React doesn't track what the user typed into
+                // contentEditable), producing visible duplicate text
+                // on exit-edit.
+                key={`${b.id}-${isEditing ? "edit" : "view"}`}
                 ref={(el) => {
-                  // Maintain the ref map so the rotate-handle's
-                  // pointerdown handler can read the box's viewport
-                  // bounding rect to find the rotation pivot center.
                   if (el) textBoxElemsRef.current.set(b.id, el);
                   else textBoxElemsRef.current.delete(b.id);
+                  if (isEditing) editingTextBoxRef.current = el;
+                }}
+                // ContentEditable handlers — only relevant when this
+                // box is in edit mode. The browser's native caret
+                // appears on the actual text; rotation/styling is
+                // preserved because we don't swap to a separate
+                // input element.
+                contentEditable={isEditing}
+                suppressContentEditableWarning
+                spellCheck={false}
+                // DO NOT update state on every input — that re-renders
+                // the contentEditable span and React reconciles its
+                // children against the DOM the user just typed into,
+                // breaking the caret position and duplicating text.
+                // The DOM is the source of truth WHILE editing; we
+                // read its textContent on blur (below) and snapshot
+                // it into state once, then.
+                /* commit handler is wired natively via focusout in
+                   the useEffect [editingTextBoxId] above — React's
+                   synthetic onBlur is unreliable on contentEditable
+                   spans, so we go native. */
+                onKeyDown={(e) => {
+                  if (!isEditing) return;
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    (e.currentTarget as HTMLElement).blur();
+                  }
+                  // Stop bubble so the doc-level Backspace listener
+                  // (which deletes the selected textbox) doesn't fire
+                  // while the user is editing text content.
+                  e.stopPropagation();
                 }}
                 // In textbox tool, stop the pointerdown from bubbling
                 // to the stage so clicking on an existing textbox
@@ -2401,27 +2483,44 @@ export function CascadeStage({
                 // it. (In move mode the stage handler already owns
                 // selection via its textbox-drag branch.)
                 onPointerDown={(e) => {
+                  if (isEditing) {
+                    // Don't bubble or preventDefault — let the
+                    // browser's contentEditable handle the click so
+                    // the caret moves to the click position.
+                    e.stopPropagation();
+                    return;
+                  }
                   if (tool !== "textbox") return;
                   e.stopPropagation();
                   setSelectedTextBoxId(b.id);
                   if (selectedLetterId !== null) setSelectedLetterId(null);
                 }}
                 onDoubleClick={(e) => {
-                  // Double-click in move mode = enter edit.
-                  // Double-click in textbox mode = auto-switch to
-                  // move + enter edit (matches user expectation that
-                  // the placeholder text is editable immediately
-                  // after placement without a manual tool switch).
+                  // Double-click in move OR textbox mode = enter edit
+                  // mode on this box. If we're in textbox tool, also
+                  // auto-switch to move so corner handles become
+                  // interactive when the user finishes editing.
                   if (tool !== "move" && tool !== "textbox") return;
                   e.stopPropagation();
                   e.preventDefault();
+                  // Commit any other box currently being edited so we
+                  // don't leak its in-progress state when switching.
+                  if (
+                    editingTextBoxId !== null &&
+                    editingTextBoxId !== b.id &&
+                    editingTextBoxRef.current
+                  ) {
+                    editingTextBoxRef.current.blur();
+                  }
                   if (tool === "textbox") setTool("move");
-                  handleStartEdit(b.id);
+                  setSelectedTextBoxId(b.id);
+                  setEditingTextBoxId(b.id);
                 }}
                 data-textbox-id={b.id}
                 className={
                   "cascade-textbox" +
-                  (isSelected ? " cascade-textbox-selected" : "")
+                  (isSelected ? " cascade-textbox-selected" : "") +
+                  (isEditing ? " cascade-textbox-editing" : "")
                 }
                 style={{
                   position: "absolute",
@@ -2430,10 +2529,23 @@ export function CascadeStage({
                   color: b.color,
                   fontFamily: `"${b.fontId}", var(--ui-georgian)`,
                   fontSize: `${b.fontSize}px`,
-                  lineHeight: 1,
-                  whiteSpace: "pre",
-                  userSelect: "none",
-                  WebkitUserSelect: "none",
+                  lineHeight: 1.1,
+                  // Wrap long text at canvas edge — Illustrator-like.
+                  // maxWidth = stage right edge - box left, minus a
+                  // small inset for the dashed border. whiteSpace:
+                  // pre-wrap so newlines + spaces are preserved AND
+                  // lines wrap at the maxWidth.
+                  maxWidth: `${A4_WIDTH - b.x - 8}px`,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  // Suppress text selection ONLY when not editing —
+                  // during edit we need normal selection behavior so
+                  // the caret can be positioned and text highlighted.
+                  userSelect: isEditing ? "text" : "none",
+                  WebkitUserSelect: isEditing ? "text" : "none",
+                  // Hide native focus outline; the dashed selection
+                  // bbox (.cascade-textbox-selected) does the job.
+                  outline: "none",
                   // Hover cursor: I-beam in BOTH move and textbox
                   // tools to signal "double-click to edit text" —
                   // matches Figma/Sketch/Illustrator UX where the
@@ -2467,7 +2579,14 @@ export function CascadeStage({
                 }}
                 data-html2canvas-ignore-children="false"
               >
-                {b.text}
+                {/* When NOT editing, React renders b.text directly
+                    (controlled). When editing, we render nothing here
+                    and the useEffect [editingTextBoxId] seeds the
+                    span's textContent imperatively. This avoids
+                    React reconciling its child tree against the
+                    user-typed DOM content (which would duplicate
+                    text or lose caret position on every keystroke). */}
+                {isEditing ? null : b.text}
                 {/* Selection overlay: 4 corner stacks (halo + square)
                     + a delete badge. Mirrors the letter overlay UX —
                     each corner has an invisible 36×36 halo for the
@@ -2481,7 +2600,14 @@ export function CascadeStage({
                     so it stacks above the top-right halo, otherwise
                     the halo's pointer-events:auto would steal the
                     delete tap. */}
-                {isSelected ? (
+                {/* Selection chrome hidden during edit — corner halos
+                    with pointer-events:auto would otherwise block the
+                    contentEditable from receiving caret-positioning
+                    clicks across the text. The dashed selection
+                    outline (cascade-textbox-selected class) DOES stay
+                    visible during edit so the user can see the box
+                    extent while typing. */}
+                {isSelected && !isEditing ? (
                   <>
                     {([
                       { pos: "tl", top: 0, left: 0, cursor: "nwse-resize" },
@@ -2589,103 +2715,11 @@ export function CascadeStage({
               </span>
             );
           })}
-          {/* Pending textbox input — only visible while the user is
-              typing a brand-new box (right after clicking with the
-              textbox tool). Commits on Enter or blur with non-empty
-              content; cancels on Escape or empty blur. Positioned
-              absolutely at the click point. Auto-focuses on mount so
-              the user can start typing immediately. */}
-          {pendingTextBox ? (
-            <input
-              // key={editingId or "new"} forces React to REMOUNT the
-              // input whenever we switch between place-mode / edit-
-              // mode / edit-of-different-box, so defaultValue applies
-              // correctly (defaultValue is only read on mount).
-              // Without this, double-clicking a second box mid-edit
-              // would carry the first box's typed text over.
-              key={pendingTextBox.editingId ?? "new"}
-              ref={pendingInputRef}
-              type="text"
-              autoFocus
-              dir="auto"
-              // Prefill with existing text in edit mode; empty in
-              // place mode (initialText is "" then).
-              defaultValue={pendingTextBox.initialText}
-              className="cascade-textbox-input"
-              data-html2canvas-ignore="true"
-              style={{
-                position: "absolute",
-                left: `${pendingTextBox.x}px`,
-                top: `${pendingTextBox.y}px`,
-                color: pendingTextBox.color,
-                // High-contrast caret-color (dark) so the blinking
-                // caret stays visible even when text color matches
-                // the poster bg (yellow text on yellow bg the caret
-                // would otherwise vanish). Matches the dark border
-                // pattern used by corner handles + delete badge.
-                caretColor: "#111",
-                fontFamily: `"${pendingTextBox.fontId}", var(--ui-georgian)`,
-                fontSize: `${pendingTextBox.fontSize}px`,
-                lineHeight: 1,
-                padding: 0,
-                margin: 0,
-                background: "transparent",
-                border: `1px dashed ${pendingTextBox.color}`,
-                outline: "none",
-                minWidth: "100px",
-                // Cap input width to canvas-remaining-width so
-                // typing can't extend the box past the canvas right
-                // edge. Illustrator-style: when the input hits the
-                // wall the user simply can't type more chars (input
-                // stops accepting).
-                maxWidth: `${Math.max(40, A4_WIDTH - pendingTextBox.x - 2)}px`,
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitPendingTextBox(e.currentTarget.value);
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  // Escape in EDIT mode = revert (don't commit edits).
-                  // Escape in PLACE mode = cancel new box (current
-                  // behaviour). Both just clear the pending state.
-                  setPendingTextBox(null);
-                  return;
-                }
-                // QWERTY → Georgian fallback. Mirrors the cascade
-                // keyboard so a user on a Latin layout can type
-                // Georgian chars without switching keyboards. Only
-                // single-char keys are intercepted (not Backspace,
-                // arrow keys, etc.). Insert the Georgian glyph at
-                // the caret position; let the browser handle the
-                // rest of the input event.
-                if (
-                  e.key.length === 1 &&
-                  !e.ctrlKey &&
-                  !e.metaKey &&
-                  !e.altKey
-                ) {
-                  const mapped = QWERTY_TO_GEORGIAN[e.key.toLowerCase()];
-                  if (mapped) {
-                    e.preventDefault();
-                    const input = e.currentTarget;
-                    const start = input.selectionStart ?? input.value.length;
-                    const end = input.selectionEnd ?? input.value.length;
-                    const before = input.value.slice(0, start);
-                    const after = input.value.slice(end);
-                    const next = before + mapped + after;
-                    input.value = next;
-                    const caret = start + mapped.length;
-                    input.setSelectionRange(caret, caret);
-                    // Fire input event so any onChange-style listeners
-                    // (none here, but defensive) get the new value.
-                    input.dispatchEvent(new Event("input", { bubbles: true }));
-                  }
-                }
-              }}
-              onBlur={(e) => commitPendingTextBox(e.currentTarget.value)}
-            />
-          ) : null}
+          {/* Pending input overlay removed: textbox editing now uses
+              contentEditable on the textbox span itself (see
+              `isEditing` branch in the textboxes.map above) so the
+              caret renders on the actual text, rotation is preserved
+              during edit, and there's no focus-theft race. */}
           {/* Selection overlay: dashed bounding box + rotation handle.
               Rendered only in move mode for the currently-selected
               letter. The box stays in screen pixels (px) because the
