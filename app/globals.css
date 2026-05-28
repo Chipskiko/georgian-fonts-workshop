@@ -1548,12 +1548,13 @@ p {
      visible regardless of which palette the user picked. */
 }
 .cascade-letter-corner-halo {
-  /* alias = a "wavy curved arrow" / "shortcut" cursor — closest
-     cross-platform analog to Figma's dedicated rotate icon. On
-     macOS Safari it renders as a small curved arrow; on Windows
-     Chrome as a small alias arrow. Good enough for the affordance.
-     Could be swapped for a custom .svg url() in /cursors/ later. */
-  cursor: alias;
+  /* Custom rotate cursor — yellow circular arrow with black stroke,
+     same visual language as the other tool cursors (move/pencil/
+     eraser/type). Hotspot is the SVG center (16, 16) so the cursor
+     anchors at the pointer tip. alias is the cross-platform fallback
+     for browsers that can't load the SVG (renders as a small curved
+     arrow). */
+  cursor: url("/cursors/rotate.svg") 16 16, alias;
 }
 
 .cascade-save-btn:disabled {
