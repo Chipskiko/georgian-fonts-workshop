@@ -2629,15 +2629,12 @@ export function CascadeStage({
                           height: "36px",
                           // Center the halo on the corner point.
                           transform: "translate(-50%, -50%)",
-                          // Visible styling so the user can see WHERE
-                          // the rotate zone is — matches the rest of
-                          // the textbox chrome (1.5px dashed outline
-                          // in the box's color, same as the selection
-                          // bbox). Rounded so it reads as "rotation
-                          // area" rather than a second selection box.
-                          border: `1.5px dashed ${b.color}`,
-                          borderRadius: "50%",
-                          boxSizing: "border-box",
+                          // Halo is invisible by design — only the
+                          // cursor change on hover indicates the
+                          // rotate zone (cursor: alias). User asked
+                          // to remove the dashed-circle hint that
+                          // briefly lived here; it cluttered the
+                          // selection chrome.
                           // In textbox tool the overlay is visible
                           // for feedback but pointer-events:none so
                           // the next canvas click passes through to
