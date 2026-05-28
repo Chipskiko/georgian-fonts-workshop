@@ -2573,15 +2573,20 @@ export function CascadeStage({
                         // slow devices the cleanup might race with the
                         // dblclick handler entering edit mode and a
                         // stale rotate ref could fire on the next move.
-                        // Touch double-tap detector — same logic as
-                        // the textbox span's onPointerDown. On small
-                        // textboxes the halos cover most of the
-                        // visible surface, so two finger taps often
-                        // land here instead of the span; without this
-                        // the user can't enter edit on small boxes
-                        // via touch.
+                        // Touch double-tap detector for the halo's
+                        // INVISIBLE outer area (not the corner
+                        // resize-square child). We only count a tap
+                        // when e.target is the halo itself — bubbles
+                        // from the corner square are a resize gesture
+                        // and would otherwise pollute the tap stream
+                        // (a single resize would land here, and the
+                        // next resize would mis-fire as double-tap
+                        // edit). Without this guard a user dragging
+                        // the corner to resize repeatedly would
+                        // unexpectedly enter edit mode.
                         onPointerDown={(e) => {
                           if (tool !== "move") return;
+                          if (e.target !== e.currentTarget) return;
                           const now = e.timeStamp || performance.now();
                           const prev = lastTextBoxTapRef.current;
                           const isDoubleTap =
@@ -2594,8 +2599,6 @@ export function CascadeStage({
                             e.stopPropagation();
                             e.preventDefault();
                             lastTextBoxTapRef.current = null;
-                            // Clear any in-progress rotate gesture so
-                            // it doesn't carry through the edit entry.
                             textBoxRotateRef.current = { id: null, centerX: 0, centerY: 0, initialPointerAngle: 0, initialBoxRotation: 0 };
                             handleStartEdit(b.id);
                             return;
@@ -2626,6 +2629,15 @@ export function CascadeStage({
                           height: "36px",
                           // Center the halo on the corner point.
                           transform: "translate(-50%, -50%)",
+                          // Visible styling so the user can see WHERE
+                          // the rotate zone is — matches the rest of
+                          // the textbox chrome (1.5px dashed outline
+                          // in the box's color, same as the selection
+                          // bbox). Rounded so it reads as "rotation
+                          // area" rather than a second selection box.
+                          border: `1.5px dashed ${b.color}`,
+                          borderRadius: "50%",
+                          boxSizing: "border-box",
                           // In textbox tool the overlay is visible
                           // for feedback but pointer-events:none so
                           // the next canvas click passes through to
