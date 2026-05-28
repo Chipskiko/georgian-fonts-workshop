@@ -850,7 +850,9 @@ export function CascadeStage({
     if (dynamicStyleRef.current) {
       dynamicStyleRef.current.appendChild(
         document.createTextNode(
-          `@font-face{font-family:"${font.id}";src:url("${font.file}") format("${font.format}");font-display:swap;}`,
+          // font-display:block — match the server-rendered
+          // fontFaceCss(); avoids FOUT on dynamically-added fonts.
+          `@font-face{font-family:"${font.id}";src:url("${font.file}") format("${font.format}");font-display:block;}`,
         ),
       );
     }

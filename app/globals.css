@@ -1,7 +1,11 @@
 @font-face {
   font-family: "Xarax";
   src: url("/ui-fonts/Xaraxfont4-kerned.otf") format("opentype");
-  font-display: swap;
+  /* block = browser hides text until the font loads instead of
+     rendering in a fallback font first (FOUT). Xarax is the whole
+     visual identity of the site UI — showing system-serif Georgian
+     for the first second would be worse than a tiny blank moment. */
+  font-display: block;
   unicode-range: U+10A0-10FF, U+1C90-1CBF, U+2D00-2D2F;
 }
 

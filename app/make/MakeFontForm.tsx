@@ -125,7 +125,7 @@ export function MakeFontForm() {
       styleRef.current = document.createElement("style");
       document.head.appendChild(styleRef.current);
     }
-    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${blobUrl}) format("opentype");font-display:swap;}`;
+    styleRef.current.textContent = `@font-face{font-family:"${familyId}";src:url(${blobUrl}) format("opentype");font-display:block;}`;
     return () => {
       URL.revokeObjectURL(blobUrl);
       if (styleRef.current) {

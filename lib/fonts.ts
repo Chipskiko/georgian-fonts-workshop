@@ -101,12 +101,22 @@ export const getFonts = unstable_cache(_getFonts, ["fonts-list"], {
 });
 
 export function fontFaceCss(fonts: FontEntry[]): string {
+  // font-display: block — browser hides text for up to 3s while the
+  // font is fetched, then renders in the real font directly. With
+  // swap (the prior default) the browser would render the fallback
+  // font first and then swap to the custom font once loaded, causing
+  // a visible "flash of unstyled text" (FOUT) where letters briefly
+  // appeared in a generic system font. For a font-design site that
+  // flash is wrong: the whole point is to see the user's font.
+  // Block trades the flash for a brief blank period (typically <1s
+  // on a normal connection); after 3s if the font hasn't loaded the
+  // browser falls back to a system font as a safety net.
   return fonts
     .map(
       (f) => `@font-face {
   font-family: "${f.id}";
   src: url("${f.file}") format("${f.format}");
-  font-display: swap;
+  font-display: block;
 }`,
     )
     .join("\n");
