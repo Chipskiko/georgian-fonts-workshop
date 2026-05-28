@@ -1,6 +1,7 @@
 import * as opentype from "opentype.js";
 import type { GlyphPath } from "./process-scan";
 import { ALPHABET, ALPHABET_CODES, BASELINE_FRAC_FROM_TOP } from "./constants";
+import { computeOpticalKerning, attachKerning } from "./optical-kerning";
 
 const UNITS_PER_EM = 1000;
 // Ascender / descender are derived from where the baseline guide sits on the
@@ -278,6 +279,17 @@ export function buildFont(
     names.windows.fullName = { en: displayFullName };
     names.windows.preferredFamily = { en: meta.familyName };
   }
+
+  // OPTICAL KERNING: with all glyphs assembled, compute per-pair kern
+  // values from each glyph's edge profile (right edge of left glyph
+  // vs. left edge of right glyph) and bake them into the font's
+  // `kern` table. Without this, scanned glyphs with varied side-
+  // bearings leave visually uneven gaps when typeset. The pipeline
+  // produces ~1000 candidate pairs; sub-threshold ones are dropped
+  // so the resulting kern table stays a few KB. See optical-kerning.ts
+  // for the algorithm + tuning constants.
+  const kerningPairs = computeOpticalKerning(font);
+  attachKerning(font, kerningPairs);
 
   const bytes = new Uint8Array(font.toArrayBuffer());
 
