@@ -47,10 +47,10 @@ const GLYPH_W_FRAC = 0.8; // cap glyph width to this fraction of cell width
 const BG = "#ffea00"; // yellow
 const FG = "#ff10b8"; // pink
 
-// Animation.
-const FRAMES = 50;
-const DELAY_MS = 110; // per-frame delay
-const SWAP_P = 0.4; // per-cell chance to swap font each frame
+// Animation. FRAMES is derived from the font count at runtime: each
+// cell cycles through EVERY font exactly once over a full loop, so the
+// loop length = number of fonts. DELAY sets the flicker speed.
+const DELAY_MS = 100; // per-frame delay (~10 fonts/sec per cell)
 
 const PUBLIC_BASE =
   "https://m9rikrlplfcm8hve.public.blob.vercel-storage.com/fonts/";
@@ -73,19 +73,6 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
-}
-
-// Shuffle-bag font picker: draws every font once (in random order)
-// before any repeat. GUARANTEES all fonts appear and keeps the
-// distribution even — strictly better than pure-random pick(), which
-// could (improbably) skip a font and over-show others. Still looks
-// random to the eye because the order within each bag is shuffled.
-function makeFontBag(fonts) {
-  let bag = [];
-  return function drawFont() {
-    if (bag.length === 0) bag = shuffle(fonts);
-    return bag.pop();
-  };
 }
 
 // Tracks which fonts actually RENDER a visible glyph (by tagged __idx),
@@ -200,23 +187,27 @@ function frameSvg(cellFonts, allFonts) {
 async function main() {
   const fonts = await loadFonts();
   const nCells = COLS * ROWS;
-  const drawFont = makeFontBag(fonts);
+  const nFonts = fonts.length;
 
-  // Initial assignment from the shuffle bag.
-  const cellFonts = Array.from({ length: nCells }, () => drawFont());
+  // ONE FULL LOOP = nFonts frames. Each cell cycles through EVERY font
+  // exactly once across the loop, so every letter "wears" every font.
+  const FRAMES = nFonts;
 
-  console.log(`Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid)…`);
+  // Per-cell font order: each cell gets its OWN shuffled permutation of
+  // all font indices. Frame f → cell i shows fonts[perm[i][f]]. Because
+  // each cell's order is independent, the grid never shows all cells in
+  // the same font on a frame (no synchronized look) — it shimmers — yet
+  // every cell is guaranteed to pass through all nFonts over the loop.
+  const perms = Array.from({ length: nCells }, () =>
+    shuffle(fonts.map((_, i) => i)),
+  );
+
+  console.log(
+    `Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid, each cell cycles all ${nFonts} fonts)…`,
+  );
   const frameBuffers = [];
   for (let f = 0; f < FRAMES; f++) {
-    // Each cell independently swaps to the next font from the shuffle
-    // bag with SWAP_P. The bag guarantees every font is drawn before
-    // any repeat. Frame 0 keeps the initial assignment so the loop
-    // start is stable.
-    if (f > 0) {
-      for (let i = 0; i < nCells; i++) {
-        if (Math.random() < SWAP_P) cellFonts[i] = drawFont();
-      }
-    }
+    const cellFonts = perms.map((perm) => fonts[perm[f]]);
     const svg = frameSvg(cellFonts, fonts);
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
     frameBuffers.push(png);
@@ -231,17 +222,20 @@ async function main() {
   await writeFile(OUT, gif);
   console.log(`\n✓ wrote ${OUT} (${(gif.length / 1024 / 1024).toFixed(2)} MB, ${FRAMES} frames)`);
 
-  // Coverage report — which fonts actually rendered a visible glyph.
+  // Coverage: by construction each cell's permutation contains every
+  // font index, so every cell cycles all fonts. Confirm the global
+  // visible-render set too (a font only fails to show if it has empty
+  // glyphs for every letter it lands on across the whole grid).
   const used = USED.size;
-  const total = fonts.length;
-  console.log(`\nFont coverage: ${used}/${total} fonts appeared on screen.`);
-  if (used < total) {
-    const missing = fonts
-      .filter((fnt) => !USED.has(fnt.__idx))
-      .map((fnt) => fnt.__name);
-    console.log(`  Never rendered (all assigned letters were empty glyphs): ${missing.join(", ")}`);
+  console.log(
+    `\nPer-cell coverage: all ${nCells} cells cycle through all ${nFonts} fonts (guaranteed by construction).`,
+  );
+  console.log(`Global visible-render coverage: ${used}/${nFonts} fonts.`);
+  if (used < nFonts) {
+    const missing = fonts.filter((fnt) => !USED.has(fnt.__idx)).map((fnt) => fnt.__name);
+    console.log(`  Rendered blank everywhere (empty glyphs): ${missing.join(", ")}`);
   } else {
-    console.log("  ✓ every font in the database is shown.");
+    console.log("  ✓ every font shows a visible glyph somewhere.");
   }
 }
 
