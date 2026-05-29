@@ -119,12 +119,33 @@ async function loadFonts() {
   return fonts;
 }
 
-// --- Glyph → positioned SVG <g> ------------------------------------------
+// --- Glyph helpers -------------------------------------------------------
+
+const BASE = 200; // base font size for path extraction
+
+/** True iff `font` renders a non-empty visible glyph for `char`. Used to
+ *  precompute, per letter, which fonts can actually draw it — so blank
+ *  (font, letter) combinations are skipped entirely rather than shown
+ *  as empty cells. Mirrors glyphSvg's emptiness checks exactly. */
+function hasGlyph(font, char) {
+  let path;
+  try {
+    path = font.getPath(char, 0, 0, BASE);
+  } catch {
+    return false;
+  }
+  const pd = path.toPathData(1);
+  if (!pd || pd.length < 4) return false;
+  const bb = path.getBoundingBox();
+  if (!(bb.x2 - bb.x1 > 0) || !(bb.y2 - bb.y1 > 0)) return false;
+  return true;
+}
 
 /** Render one letter in one font, centered + scaled to fit a grid cell.
- *  Returns an SVG <g>…</g> string, or "" if the glyph is empty/missing. */
+ *  Returns an SVG <g>…</g> string, or "" if the glyph is empty/missing.
+ *  (Callers now pass only fonts pre-validated by hasGlyph, so "" is a
+ *  defensive guard rather than an expected path.) */
 function glyphSvg(font, char, cellX, cellY) {
-  const BASE = 200; // base font size for path extraction
   let path;
   try {
     path = font.getPath(char, 0, 0, BASE);
@@ -156,8 +177,10 @@ function glyphSvg(font, char, cellX, cellY) {
 
 // --- Build one frame's SVG -----------------------------------------------
 
-function frameSvg(cellFonts, allFonts) {
-  // cellFonts: array of length COLS*ROWS, each an opentype.Font.
+function frameSvg(cellFonts) {
+  // cellFonts: array of length COLS*ROWS, each an opentype.Font that's
+  // already been validated to render this cell's letter (see main's
+  // per-cell valid-font sets), so no blank-cell fallback is needed.
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
     `<rect width="${W}" height="${H}" fill="${BG}"/>`,
@@ -165,17 +188,9 @@ function frameSvg(cellFonts, allFonts) {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const idx = r * COLS + c;
-      // Wrap the alphabet to fill all cells (last 2 of a 35-cell grid
-      // repeat ა/ბ — invisible amid the flicker).
       const char = ALPHABET[idx % ALPHABET.length];
-      let g = glyphSvg(cellFonts[idx], char, c * CELL_W, r * CELL_H);
-      // Fallback: if the assigned font has an empty/missing glyph for
-      // this letter, try a few other random fonts so the cell doesn't
-      // render blank (blanks read as bugs in the grid).
-      for (let t = 0; t < 8 && g === ""; t++) {
-        g = glyphSvg(pick(allFonts), char, c * CELL_W, r * CELL_H);
-      }
-      parts.push(g);
+      const font = cellFonts[idx];
+      if (font) parts.push(glyphSvg(font, char, c * CELL_W, r * CELL_H));
     }
   }
   parts.push(`</svg>`);
@@ -189,26 +204,38 @@ async function main() {
   const nCells = COLS * ROWS;
   const nFonts = fonts.length;
 
-  // ONE FULL LOOP = nFonts frames. Each cell cycles through EVERY font
-  // exactly once across the loop, so every letter "wears" every font.
-  const FRAMES = nFonts;
+  // PER-CELL VALID-FONT SETS: for each cell's letter, keep only the
+  // fonts that actually render it (skip blank/empty glyphs entirely —
+  // no blank cells, and a font that can't draw a letter never gets a
+  // turn in that cell). Each cell's set is shuffled so its cycle order
+  // is independent → the grid shimmers rather than changing in lockstep.
+  console.log("Validating glyphs per letter (skipping blank ones)…");
+  const cellValidFonts = [];
+  for (let idx = 0; idx < nCells; idx++) {
+    const char = ALPHABET[idx % ALPHABET.length];
+    let valid = fonts.filter((fnt) => hasGlyph(fnt, char));
+    if (valid.length === 0) valid = fonts; // degenerate: no font draws it
+    cellValidFonts.push(shuffle(valid));
+  }
+  const validCounts = cellValidFonts.map((v) => v.length);
+  const maxValid = Math.max(...validCounts);
 
-  // Per-cell font order: each cell gets its OWN shuffled permutation of
-  // all font indices. Frame f → cell i shows fonts[perm[i][f]]. Because
-  // each cell's order is independent, the grid never shows all cells in
-  // the same font on a frame (no synchronized look) — it shimmers — yet
-  // every cell is guaranteed to pass through all nFonts over the loop.
-  const perms = Array.from({ length: nCells }, () =>
-    shuffle(fonts.map((_, i) => i)),
-  );
+  // LOOP LENGTH = the largest per-letter valid-font count, so the
+  // best-covered letter shows all of its fonts exactly once. Cells with
+  // fewer valid fonts wrap their (shorter) shuffled list to fill the
+  // loop — they only ever show fonts that can draw them, just with a
+  // few repeats. This keeps a clean single loop with zero blank cells.
+  const FRAMES = maxValid;
 
   console.log(
-    `Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid, each cell cycles all ${nFonts} fonts)…`,
+    `Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid; each letter cycles only the fonts that can draw it, ${Math.min(...validCounts)}–${maxValid} per letter)…`,
   );
   const frameBuffers = [];
   for (let f = 0; f < FRAMES; f++) {
-    const cellFonts = perms.map((perm) => fonts[perm[f]]);
-    const svg = frameSvg(cellFonts, fonts);
+    // Cell i at frame f → its f-th valid font (wrapping if its list is
+    // shorter than FRAMES).
+    const cellFonts = cellValidFonts.map((v) => v[f % v.length]);
+    const svg = frameSvg(cellFonts);
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
     frameBuffers.push(png);
     if ((f + 1) % 10 === 0) console.log(`  ${f + 1}/${FRAMES} frames`);
@@ -222,20 +249,18 @@ async function main() {
   await writeFile(OUT, gif);
   console.log(`\n✓ wrote ${OUT} (${(gif.length / 1024 / 1024).toFixed(2)} MB, ${FRAMES} frames)`);
 
-  // Coverage: by construction each cell's permutation contains every
-  // font index, so every cell cycles all fonts. Confirm the global
-  // visible-render set too (a font only fails to show if it has empty
-  // glyphs for every letter it lands on across the whole grid).
+  // Coverage: every cell cycles its full valid-font set (guaranteed by
+  // construction). USED collects fonts that rendered a visible glyph
+  // anywhere; a font absent from USED is blank for EVERY letter it was
+  // assigned — report it.
   const used = USED.size;
   console.log(
-    `\nPer-cell coverage: all ${nCells} cells cycle through all ${nFonts} fonts (guaranteed by construction).`,
+    `\nEach letter cycles only the fonts that can draw it (${Math.min(...validCounts)}–${maxValid} of ${nFonts}); blank glyphs skipped.`,
   );
-  console.log(`Global visible-render coverage: ${used}/${nFonts} fonts.`);
+  console.log(`Fonts that rendered a visible glyph somewhere: ${used}/${nFonts}.`);
   if (used < nFonts) {
     const missing = fonts.filter((fnt) => !USED.has(fnt.__idx)).map((fnt) => fnt.__name);
-    console.log(`  Rendered blank everywhere (empty glyphs): ${missing.join(", ")}`);
-  } else {
-    console.log("  ✓ every font shows a visible glyph somewhere.");
+    console.log(`  Blank for every alphabet letter (never shown): ${missing.join(", ")}`);
   }
 }
 
