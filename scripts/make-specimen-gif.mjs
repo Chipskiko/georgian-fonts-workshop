@@ -60,11 +60,38 @@ const ALPHABET = Array.from({ length: 33 }, (_, i) =>
   String.fromCharCode(0x10d0 + i),
 );
 
-// --- Deterministic-ish RNG (so reruns are reproducible if seeded) --------
+// --- Randomness ----------------------------------------------------------
 // Plain Math.random is fine for a one-off; kept simple.
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Shuffle-bag font picker: draws every font once (in random order)
+// before any repeat. GUARANTEES all fonts appear and keeps the
+// distribution even — strictly better than pure-random pick(), which
+// could (improbably) skip a font and over-show others. Still looks
+// random to the eye because the order within each bag is shuffled.
+function makeFontBag(fonts) {
+  let bag = [];
+  return function drawFont() {
+    if (bag.length === 0) bag = shuffle(fonts);
+    return bag.pop();
+  };
+}
+
+// Tracks which fonts actually RENDER a visible glyph (by tagged __idx),
+// so we can report true coverage at the end — not just "assigned" but
+// "appeared on screen".
+const USED = new Set();
 
 // --- Load fonts ----------------------------------------------------------
 
@@ -92,6 +119,9 @@ async function loadFonts() {
       const font = opentype.parse(
         buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
       );
+      // Tag with a stable index + display name for coverage reporting.
+      font.__idx = fonts.length;
+      font.__name = fn.split("__")[0]; // human-readable prefix
       fonts.push(font);
     } catch (e) {
       console.warn(`  skip ${fn}: ${e.message}`);
@@ -131,6 +161,9 @@ function glyphSvg(font, char, cellX, cellY) {
   const tx = cx - ((bb.x1 + bb.x2) / 2) * s;
   const ty = cy - ((bb.y1 + bb.y2) / 2) * s;
 
+  // Record that this font produced a visible glyph (coverage tracking).
+  if (typeof font.__idx === "number") USED.add(font.__idx);
+
   return `<g transform="translate(${tx.toFixed(2)},${ty.toFixed(2)}) scale(${s.toFixed(4)})"><path d="${pd}" fill="${FG}"/></g>`;
 }
 
@@ -167,18 +200,21 @@ function frameSvg(cellFonts, allFonts) {
 async function main() {
   const fonts = await loadFonts();
   const nCells = COLS * ROWS;
+  const drawFont = makeFontBag(fonts);
 
-  // Initial random assignment.
-  const cellFonts = Array.from({ length: nCells }, () => pick(fonts));
+  // Initial assignment from the shuffle bag.
+  const cellFonts = Array.from({ length: nCells }, () => drawFont());
 
   console.log(`Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid)…`);
   const frameBuffers = [];
   for (let f = 0; f < FRAMES; f++) {
-    // Each cell independently swaps to a new random font with SWAP_P.
-    // Frame 0 keeps the initial assignment so the loop start is stable.
+    // Each cell independently swaps to the next font from the shuffle
+    // bag with SWAP_P. The bag guarantees every font is drawn before
+    // any repeat. Frame 0 keeps the initial assignment so the loop
+    // start is stable.
     if (f > 0) {
       for (let i = 0; i < nCells; i++) {
-        if (Math.random() < SWAP_P) cellFonts[i] = pick(fonts);
+        if (Math.random() < SWAP_P) cellFonts[i] = drawFont();
       }
     }
     const svg = frameSvg(cellFonts, fonts);
@@ -194,6 +230,19 @@ async function main() {
 
   await writeFile(OUT, gif);
   console.log(`\n✓ wrote ${OUT} (${(gif.length / 1024 / 1024).toFixed(2)} MB, ${FRAMES} frames)`);
+
+  // Coverage report — which fonts actually rendered a visible glyph.
+  const used = USED.size;
+  const total = fonts.length;
+  console.log(`\nFont coverage: ${used}/${total} fonts appeared on screen.`);
+  if (used < total) {
+    const missing = fonts
+      .filter((fnt) => !USED.has(fnt.__idx))
+      .map((fnt) => fnt.__name);
+    console.log(`  Never rendered (all assigned letters were empty glyphs): ${missing.join(", ")}`);
+  } else {
+    console.log("  ✓ every font in the database is shown.");
+  }
 }
 
 main().catch((e) => {
