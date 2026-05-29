@@ -47,10 +47,16 @@ const GLYPH_W_FRAC = 0.8; // cap glyph width to this fraction of cell width
 const BG = "#ffea00"; // yellow
 const FG = "#ff10b8"; // pink
 
-// Animation. FRAMES is derived from the font count at runtime: each
-// cell cycles through EVERY font exactly once over a full loop, so the
-// loop length = number of fonts. DELAY sets the flicker speed.
-const DELAY_MS = 100; // per-frame delay (~10 fonts/sec per cell)
+// Animation. FRAMES is derived at runtime from the font count × a
+// "hold" multiplier: each cell still cycles through every font it can
+// draw exactly once per loop, but each font is held for a varied
+// number of frames and the cells' swap moments are staggered, so the
+// grid shimmers gently instead of every cell flipping on every frame.
+const DELAY_MS = 100; // per-frame delay
+// Loop length = maxValidFonts × HOLD_MULT. Higher = each letter holds
+// each font longer (calmer, fewer simultaneous swaps) at the cost of
+// more frames / bigger file. 1.0 = the old every-frame strobe.
+const HOLD_MULT = 2.4;
 
 const PUBLIC_BASE =
   "https://m9rikrlplfcm8hve.public.blob.vercel-storage.com/fonts/";
@@ -73,6 +79,33 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+/** Build a per-cell frame schedule of length `frames`: an array where
+ *  schedule[f] is the font to show at frame f. Every font in `valid`
+ *  appears at least once (so the cell cycles all its drawable fonts),
+ *  held for a varied number of consecutive frames, and the whole
+ *  sequence is rotated by a random phase so this cell's swaps don't
+ *  line up with other cells' (staggered → gentle, not lockstep). */
+function buildSchedule(valid, frames) {
+  const n = valid.length;
+  // Base: each font held 1 frame. Distribute the remaining frames as
+  // random +1 increments → organic hold durations (mostly 1–3 frames).
+  const holds = new Array(n).fill(1);
+  let extra = Math.max(0, frames - n);
+  while (extra > 0) {
+    holds[Math.floor(Math.random() * n)]++;
+    extra--;
+  }
+  // Expand into a flat per-frame sequence (length === frames).
+  const seq = [];
+  for (let i = 0; i < n; i++) {
+    for (let h = 0; h < holds[i]; h++) seq.push(valid[i]);
+  }
+  // Random phase rotation so this cell starts mid-cycle, offsetting its
+  // swap frames from neighbors'.
+  const phase = Math.floor(Math.random() * seq.length);
+  return seq.slice(phase).concat(seq.slice(0, phase));
 }
 
 // Tracks which fonts actually RENDER a visible glyph (by tagged __idx),
@@ -220,21 +253,20 @@ async function main() {
   const validCounts = cellValidFonts.map((v) => v.length);
   const maxValid = Math.max(...validCounts);
 
-  // LOOP LENGTH = the largest per-letter valid-font count, so the
-  // best-covered letter shows all of its fonts exactly once. Cells with
-  // fewer valid fonts wrap their (shorter) shuffled list to fill the
-  // loop — they only ever show fonts that can draw them, just with a
-  // few repeats. This keeps a clean single loop with zero blank cells.
-  const FRAMES = maxValid;
+  // LOOP LENGTH = maxValid × HOLD_MULT, so the best-covered letter shows
+  // each of its fonts ~HOLD_MULT frames on average. Per-cell schedules
+  // hold each font for a varied count of frames and start at a random
+  // phase, so swaps stagger across the grid (gentle, not strobe) while
+  // every letter still cycles all the fonts that can draw it.
+  const FRAMES = Math.round(maxValid * HOLD_MULT);
+  const schedules = cellValidFonts.map((v) => buildSchedule(v, FRAMES));
 
   console.log(
-    `Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid; each letter cycles only the fonts that can draw it, ${Math.min(...validCounts)}–${maxValid} per letter)…`,
+    `Rendering ${FRAMES} frames (${W}×${H}, ${COLS}×${ROWS} grid; each letter cycles ${Math.min(...validCounts)}–${maxValid} fonts, staggered timing)…`,
   );
   const frameBuffers = [];
   for (let f = 0; f < FRAMES; f++) {
-    // Cell i at frame f → its f-th valid font (wrapping if its list is
-    // shorter than FRAMES).
-    const cellFonts = cellValidFonts.map((v) => v[f % v.length]);
+    const cellFonts = schedules.map((s) => s[f]);
     const svg = frameSvg(cellFonts);
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
     frameBuffers.push(png);
