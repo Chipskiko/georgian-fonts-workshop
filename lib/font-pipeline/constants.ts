@@ -124,3 +124,46 @@ export function boxBoundsPt(index: number) {
   const l = cellLayoutPt(index);
   return { x: l.boxX, y: l.boxY, w: l.boxW, h: l.boxH };
 }
+
+// =====================================================================
+//  Canonical warped-image geometry. Lives here (not process-scan.ts)
+//  because BOTH pipelines need it — the server pipeline (sharp+potrace)
+//  and the browser pipeline (canvas+wasm-potrace). This module is pure
+//  (no node deps) so it bundles into the client without dragging sharp
+//  along.
+// =====================================================================
+
+// Canonical output dimensions for the perspective-warped image.
+// At 2100px wide, 1pt ≈ 3.53px, so the printed guide lines (~0.3pt)
+// become ~1px in the warped buffer.
+export const CANONICAL_W = 2100;
+export const CANONICAL_H = Math.round(CANONICAL_W * (A4_H_PT / A4_W_PT));
+export const PT_TO_CANONICAL_PX = CANONICAL_W / A4_W_PT;
+
+/**
+ * SINGLE SOURCE OF TRUTH for cell extraction rectangles in the warped
+ * canonical image. ALL callsites use this — server processScan, browser
+ * processScan, debug warped-view pink rects, debug cells-view extraction.
+ * If this is right, every cell-related rendering is right; if it's
+ * wrong, every cell rendering is wrong in exactly the same way.
+ *
+ * @param i 0-based alphabet index
+ * @param insetPt Pixels inset from the box edge (in PT). Used to keep
+ *                the printed cell-border line out of trace input. Pass 0
+ *                for the full box (debug cells view); pass 3 for the
+ *                production crop and the warped-view pink rect.
+ */
+export function cellExtractRect(i: number, insetPt = 0): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const box = boxBoundsPt(i);
+  const insetPx = Math.round(insetPt * PT_TO_CANONICAL_PX);
+  const x = Math.round(box.x * PT_TO_CANONICAL_PX) + insetPx;
+  const y = Math.round((A4_H_PT - box.y - box.h) * PT_TO_CANONICAL_PX) + insetPx;
+  const w = Math.round(box.w * PT_TO_CANONICAL_PX) - insetPx * 2;
+  const h = Math.round(box.h * PT_TO_CANONICAL_PX) - insetPx * 2;
+  return { x, y, w, h };
+}

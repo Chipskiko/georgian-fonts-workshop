@@ -45,13 +45,84 @@ const DEFAULT_TUNER_PARAMS: TunerParams = {
 
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
+  return bytesToBase64(new Uint8Array(buf));
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
-  const bytes = new Uint8Array(buf);
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
     bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as unknown as number[]);
   }
   return btoa(bin);
+}
+
+/** Mirror of safeSegment in app/make/actions.ts — keep in sync. Used
+ *  for the client-side pipeline's name validation so the on-device
+ *  path produces the exact same filenames the server path would. */
+function safeSegment(s: string): string {
+  return s
+    .normalize("NFKD")
+    .replace(/[/\\?%*:|"<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Max scan upload size — mirror of MAX_BYTES in app/make/actions.ts. */
+const MAX_SCAN_BYTES = 25 * 1024 * 1024;
+
+/**
+ * On-device scan → font preview. Runs the browser pipeline
+ * (process-scan.client + buildFont) and returns the same shape the
+ * server's previewFontFromScan produces, so the rest of the component
+ * doesn't care which path built the preview.
+ *
+ * Throws on pipeline errors — the caller falls back to the server
+ * action, which keeps robustness while the client path handles the
+ * overwhelming majority of uploads with ZERO server compute (and no
+ * serverless 10s timeout for detailed scans).
+ */
+async function clientPreviewFromScan(
+  file: File,
+  fontName: string,
+  designer: string,
+): Promise<Extract<PreviewResult, { ok: true }>> {
+  const cleanName = safeSegment(fontName);
+  if (!cleanName) throw new Error("სახელი სავალდებულოა");
+  const cleanDesigner = safeSegment(designer);
+
+  const [{ clientProcessScan }, { buildFont }] = await Promise.all([
+    import("@/lib/font-pipeline/process-scan.client"),
+    import("@/lib/font-pipeline/build-font"),
+  ]);
+
+  const glyphPaths = await clientProcessScan(file, (f) => {
+    // Progress breadcrumbs — invaluable for diagnosing where a slow
+    // or stuck device pipeline got to (decode 0.05 → layout 0.15 →
+    // rasterize 0.25 → warp 0.4 → cells 0.4..1.0).
+    console.debug(`[make] device pipeline ${(f * 100).toFixed(0)}%`);
+  });
+  if (glyphPaths.length === 0) {
+    throw new Error("ასოები ვერ მოიძებნა — შეამოწმე სკანი და სცადე თავიდან");
+  }
+
+  const ttf = buildFont(glyphPaths, {
+    familyName: cleanName,
+    designerName: cleanDesigner || undefined,
+  });
+
+  const requestedName = cleanDesigner
+    ? `${cleanName}__${cleanDesigner}.otf`
+    : `${cleanName}.otf`;
+
+  return {
+    ok: true,
+    message: "გადახედვა მზადაა",
+    glyphCount: glyphPaths.length,
+    ttfBase64: bytesToBase64(ttf),
+    requestedName,
+    detectedChars: glyphPaths.map((g) => g.char),
+  };
 }
 
 export function MakeFontForm() {
@@ -69,7 +140,9 @@ export function MakeFontForm() {
   // Shown as a tiny status line — "warp" is the desirable case; "fallback"
   // means lower-quality JPEG was sent to the server (more likely to
   // produce hollow-fills-in-shapes artifacts on phone uploads).
-  const [scanPath, setScanPath] = useState<"warp" | "fallback" | "passthrough" | null>(null);
+  // Widened to string so the pipeline suffix ("·device" / "·server")
+  // can be appended after the straighten path — e.g. "warp·device".
+  const [scanPath, setScanPath] = useState<string | null>(null);
   // Tuner state. `tunerFileB64` is the uploaded scan cached client-side so
   // we can re-call the server without re-uploading on every slider move.
   const [tunerFileB64, setTunerFileB64] = useState<string | null>(null);
@@ -204,7 +277,39 @@ export function MakeFontForm() {
         );
       }
       setStage("tracing");
-      const r = await previewFontFromScan(fd);
+
+      // CLIENT-FIRST PIPELINE: run the scan → font build entirely on
+      // this device (canvas + wasm potrace + opentype.js). The server
+      // is only contacted at SAVE time, with the finished bytes. This
+      // removes the serverless compute (and its ~10s timeout) from the
+      // hot path — a detailed scan that took 15s server-side just works
+      // here. If the client pipeline throws for any reason (old
+      // browser, detection edge case), fall back to the original
+      // server action so uploads never hard-fail on pipeline parity.
+      const scanFile = fd.get("scan");
+      const fontName = ((fd.get("fontName") as string | null) ?? "").trim();
+      const designer = ((fd.get("designer") as string | null) ?? "").trim();
+      if (scanFile instanceof File && scanFile.size > MAX_SCAN_BYTES) {
+        setErrorMsg(`ძალიან დიდია (მაქს ${MAX_SCAN_BYTES / 1024 / 1024}MB)`);
+        setStage("idle");
+        return;
+      }
+      let r: PreviewResult;
+      if (scanFile instanceof File && scanFile.size > 0) {
+        try {
+          r = await clientPreviewFromScan(scanFile, fontName, designer);
+          setScanPath((p) => (p ? `${p}·device` : "device"));
+        } catch (clientErr) {
+          console.warn(
+            "[make] client pipeline failed, falling back to server:",
+            clientErr,
+          );
+          r = await previewFontFromScan(fd);
+          setScanPath((p) => (p ? `${p}·server` : "server"));
+        }
+      } else {
+        r = await previewFontFromScan(fd);
+      }
       if (!r.ok) {
         setErrorMsg(r.message);
         setStage("idle");
