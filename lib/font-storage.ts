@@ -204,6 +204,68 @@ async function dedupeBlob(filename: string): Promise<string> {
   return `${base}_${Date.now()}${ext}`;
 }
 
+// --- Preview-SVG sidecars (plan doc §8) ----------------------------------
+// Each stored font gets a baked `<filename>.preview.svg` sidecar — the
+// fonts page renders it via <img> so letterforms appear as themselves
+// with no @font-face loading (no FOUT, no OTS dependency). Same idiom
+// as poster `_thumb`/`_bnw` sidecars. Sidecars are best-effort: fonts
+// without one (generation failed, pre-backfill uploads) fall back to
+// @font-face text on the page.
+
+const PREVIEW_SUFFIX = ".preview.svg";
+
+async function savePreviewSidecar(fontFilename: string, svg: string): Promise<void> {
+  if (useBlob()) {
+    const { put } = await import("@vercel/blob");
+    await put(`${BLOB_PREFIX}${fontFilename}${PREVIEW_SUFFIX}`, svg, {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "image/svg+xml",
+    });
+  } else {
+    await writeFile(path.join(FONT_DIR_FS, `${fontFilename}${PREVIEW_SUFFIX}`), svg, "utf8");
+  }
+}
+
+async function deletePreviewSidecar(fontFilename: string): Promise<void> {
+  if (useBlob()) {
+    const { del, list } = await import("@vercel/blob");
+    const target = `${BLOB_PREFIX}${fontFilename}${PREVIEW_SUFFIX}`;
+    const { blobs } = await list({ prefix: target });
+    const hit = blobs.find((b) => b.pathname === target);
+    if (hit) await del(hit.url);
+  } else {
+    await unlink(path.join(FONT_DIR_FS, `${fontFilename}${PREVIEW_SUFFIX}`)).catch(() => {});
+  }
+}
+
+/** Map of font filename → public URL of its preview sidecar, for every
+ *  font that has one. Consumed by lib/fonts.ts to attach previewSvg to
+ *  FontEntry rows. */
+export async function listFontPreviewUrls(): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (useBlob()) {
+    const { list } = await import("@vercel/blob");
+    const { blobs } = await list({ prefix: BLOB_PREFIX });
+    for (const b of blobs) {
+      if (!b.pathname.endsWith(PREVIEW_SUFFIX)) continue;
+      const fontFilename = b.pathname
+        .replace(BLOB_PREFIX, "")
+        .slice(0, -PREVIEW_SUFFIX.length);
+      out[fontFilename] = b.url;
+    }
+  } else {
+    if (!existsSync(FONT_DIR_FS)) return out;
+    for (const e of readdirSync(FONT_DIR_FS, { withFileTypes: true })) {
+      if (!e.isFile() || !e.name.endsWith(PREVIEW_SUFFIX)) continue;
+      const fontFilename = e.name.slice(0, -PREVIEW_SUFFIX.length);
+      out[fontFilename] = `/fonts/${encodeURIComponent(e.name)}`;
+    }
+  }
+  return out;
+}
+
 // --- Public API ----------------------------------------------------------
 
 export async function listFonts(): Promise<StoredFont[]> {
@@ -211,11 +273,30 @@ export async function listFonts(): Promise<StoredFont[]> {
 }
 
 export async function saveFont(filename: string, bytes: Uint8Array | Buffer): Promise<StoredFont> {
-  return useBlob() ? await saveBlob(filename, bytes) : await saveFs(filename, bytes);
+  const stored = useBlob() ? await saveBlob(filename, bytes) : await saveFs(filename, bytes);
+  // Bake the alphabet-preview sidecar. Non-fatal on failure — the font
+  // is already saved; the page just falls back to @font-face for it.
+  try {
+    const { buildPreviewSvg } = await import("./font-pipeline/preview-svg");
+    const svg = buildPreviewSvg(
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+    );
+    if (svg) await savePreviewSidecar(stored.filename, svg);
+  } catch (e) {
+    console.warn("[saveFont] preview sidecar generation failed (non-fatal):", e);
+  }
+  return stored;
 }
 
 export async function deleteFont(filename: string): Promise<void> {
-  return useBlob() ? await deleteBlob(filename) : await deleteFs(filename);
+  if (useBlob()) {
+    await deleteBlob(filename);
+  } else {
+    await deleteFs(filename);
+  }
+  // Best-effort sidecar cleanup — orphaned sidecars are invisible to
+  // the UI (no matching font row) but waste storage.
+  await deletePreviewSidecar(filename).catch(() => {});
 }
 
 export async function dedupeFontFilename(filename: string): Promise<string> {

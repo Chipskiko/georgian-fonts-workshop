@@ -22,7 +22,9 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
     <div className={`collectionContainers${open ? " open" : ""}`}>
       <a
         className="workshops alphabet-preview"
-        style={{ fontFamily: `"${font.id}"` }}
+        // @font-face styling only needed for the text fallback — the
+        // baked-SVG variant IS the letterforms already.
+        style={font.previewSvg ? undefined : { fontFamily: `"${font.id}"` }}
         onClick={(e) => {
           e.preventDefault();
           setOpen((o) => !o);
@@ -30,7 +32,22 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
         href="#"
         aria-label={font.name}
       >
-        {alphabet}
+        {font.previewSvg ? (
+          // Baked alphabet preview (plan doc §8): a sidecar SVG of the
+          // real vector outlines, generated at save time. Renders the
+          // font AS ITSELF from first paint — no fallback font, no
+          // blank-then-swap, no font download, immune to OTS rejection.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="alphabet-preview-img"
+            src={font.previewSvg}
+            alt={`${font.name} — ქართული ანბანი`}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          alphabet
+        )}
       </a>
 
       {open ? (

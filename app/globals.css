@@ -241,6 +241,19 @@ p {
   word-break: keep-all;
 }
 
+/* Baked alphabet-preview sidecar image (plan doc §8). ALL 33 letters on
+   one line, baked into the SVG. The strip scales to the row width; a
+   max-height caps unusually tall glyph sets so no row towers over the
+   others. */
+.alphabet-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 160px;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
 .specimen-name strong {
   font-family: Times, "Times New Roman", serif;
   font-style: normal;

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { unstable_cache } from "next/cache";
 import type { FontEntry } from "./types";
-import { listFonts } from "./font-storage";
+import { listFonts, listFontPreviewUrls } from "./font-storage";
 
 export type { FontEntry };
 
@@ -33,7 +33,12 @@ function toName(filename: string): { name: string; designer?: string } {
  *  by itself; the public getFonts wraps it with unstable_cache so
  *  callers in server components get a cached result. */
 async function _getFonts(): Promise<FontEntry[]> {
-  const stored = await listFonts();
+  // Font list + preview-sidecar map in parallel — both are one storage
+  // list() call; the pair still runs only once per cache window.
+  const [stored, previewUrls] = await Promise.all([
+    listFonts(),
+    listFontPreviewUrls().catch(() => ({}) as Record<string, string>),
+  ]);
   // Carry createdAt alongside the FontEntry just inside this function
   // (don't leak it through the public type — callers only need name +
   // file). Used for the newest-first sort at the bottom of the body.
@@ -51,6 +56,7 @@ async function _getFonts(): Promise<FontEntry[]> {
       file: s.publicUrl,
       filename: s.filename,
       format,
+      previewSvg: previewUrls[s.filename],
       _createdAt: s.createdAt,
     });
   }
