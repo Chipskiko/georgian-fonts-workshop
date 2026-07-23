@@ -27,12 +27,14 @@ const ALPHABET = "ა ბ გ დ ე ვ ზ თ ი კ ლ მ ნ ო პ �
 const SIZE = 64;
 const PAD = 6;
 const FILL = "#ffea00";
-const LETTER_GAP = SIZE * 0.4;
+const LETTER_GAP = SIZE * 0.2;
 
-// Single-line manual per-letter layout — skips characters mapping to
-// .notdef (glyph index 0). Several workshop fonts have broken cmaps
-// and/or inked notdef glyphs; a string render would stamp that ink at
-// every space/missing char. Mirrors layoutAlphabet in preview-svg.ts.
+// Single-line manual per-letter layout with OPTICAL (ink-edge) spacing —
+// positions each glyph by its ink bounding box instead of its metric
+// advance (workshop glyphs share a uniform advance but ink width/offset
+// varies wildly with how the participant drew in the cell). Skips
+// .notdef (glyph index 0) and empty glyphs. Mirrors layoutAlphabet in
+// preview-svg.ts — keep in sync.
 function layoutAlphabet(font) {
   const combined = new opentype.Path();
   let x = 0;
@@ -44,9 +46,17 @@ function layoutAlphabet(font) {
       continue;
     }
     if (!glyph || glyph.index === 0) continue;
-    combined.extend(glyph.getPath(x, 0, SIZE));
-    const advance = ((glyph.advanceWidth ?? font.unitsPerEm * 0.5) / font.unitsPerEm) * SIZE;
-    x += advance + LETTER_GAP;
+    let probe;
+    try {
+      probe = glyph.getPath(0, 0, SIZE);
+    } catch {
+      continue;
+    }
+    const bb = probe.getBoundingBox();
+    const inkW = bb.x2 - bb.x1;
+    if (!(inkW > 0)) continue; // empty glyph — no ink, no gap
+    combined.extend(glyph.getPath(x - bb.x1, 0, SIZE));
+    x += inkW + LETTER_GAP;
   }
   return combined;
 }

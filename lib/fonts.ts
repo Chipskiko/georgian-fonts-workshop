@@ -2,6 +2,7 @@ import path from "node:path";
 import { unstable_cache } from "next/cache";
 import type { FontEntry } from "./types";
 import { listFonts, listFontPreviewUrls } from "./font-storage";
+import { PREVIEW_SVG_VERSION } from "./font-pipeline/preview-svg";
 
 export type { FontEntry };
 
@@ -56,7 +57,11 @@ async function _getFonts(): Promise<FontEntry[]> {
       file: s.publicUrl,
       filename: s.filename,
       format,
-      previewSvg: previewUrls[s.filename],
+      // ?v= busts the Blob CDN cache when sidecars are force-
+      // regenerated after a layout change (see PREVIEW_SVG_VERSION).
+      previewSvg: previewUrls[s.filename]
+        ? `${previewUrls[s.filename]}?v=${PREVIEW_SVG_VERSION}`
+        : undefined,
       _createdAt: s.createdAt,
     });
   }

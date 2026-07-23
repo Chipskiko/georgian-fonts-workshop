@@ -23,24 +23,41 @@
 import opentype from "opentype.js";
 import { ALPHABET } from "./constants";
 
+/** Bump whenever the preview LAYOUT/PALETTE changes and sidecars are
+ *  force-regenerated (scripts/backfill-preview-svg.mjs --force). The
+ *  fonts page appends this as ?v= to sidecar URLs — Vercel Blob's CDN
+ *  caches aggressively (~30 days) and regenerations reuse the same
+ *  URL, so without the version bump users would see stale previews.
+ *    v1: two-line layout, metric advances
+ *    v2: single line, optical ink-edge spacing */
+export const PREVIEW_SVG_VERSION = 2;
+
 /** Font size (SVG units) the alphabet is rendered at. Purely internal —
  *  the SVG scales to its container via viewBox. */
 const SIZE = 64;
 /** Padding around the combined outline (SVG units). */
 const PAD = 6;
-/** Fixed horizontal gap between letters. We lay letters out MANUALLY
- *  (not via font.getPath on a spaced string) because several workshop
- *  fonts have broken cmaps and/or inked .notdef glyphs — a string
- *  render would stamp the notdef ink at every space/missing character.
- *  Manual layout lets us SKIP unmapped characters entirely. */
-const LETTER_GAP = SIZE * 0.4;
+/** Fixed horizontal gap between letters, INK-EDGE to INK-EDGE. We lay
+ *  letters out MANUALLY (not via font.getPath on a spaced string) for
+ *  two reasons:
+ *  1. Several workshop fonts have broken cmaps and/or inked .notdef
+ *     glyphs — a string render would stamp the notdef ink at every
+ *     space/missing character. Manual layout SKIPS unmapped letters.
+ *  2. OPTICAL spacing: workshop glyphs share a uniform metric advance
+ *     (from the scan cell's aspect) but their actual ink is much
+ *     narrower and sits at arbitrary offsets inside the cell (wherever
+ *     the participant drew). Advancing by metrics produced big uneven
+ *     gaps. Instead we position each glyph by its ink BOUNDING BOX —
+ *     every pair of letters gets the same visual gap regardless of
+ *     the font's metric quality. */
+const LETTER_GAP = SIZE * 0.2;
 /** Site --fg. Baked because <img>-embedded SVG can't see CSS vars. */
 const FILL = "#ffea00";
 
-/** Lay out the letters on a single baseline, advancing by each glyph's
- *  own width + a fixed gap. Skips characters that map to .notdef (glyph
- *  index 0) — missing letters simply don't appear, like the @font-face
- *  fallback shows for absent glyphs (minus the notdef box). */
+/** Lay out the letters on a single baseline with optical (ink-edge)
+ *  spacing. Skips characters that map to .notdef (glyph index 0) or
+ *  have no visible ink — missing letters simply don't appear, like the
+ *  @font-face fallback shows for absent glyphs (minus the notdef box). */
 function layoutAlphabet(font: opentype.Font): opentype.Path {
   const combined = new opentype.Path();
   let x = 0;
@@ -52,10 +69,20 @@ function layoutAlphabet(font: opentype.Font): opentype.Path {
       continue;
     }
     if (!glyph || glyph.index === 0) continue;
-    combined.extend(glyph.getPath(x, 0, SIZE));
-    const advance =
-      ((glyph.advanceWidth ?? font.unitsPerEm * 0.5) / font.unitsPerEm) * SIZE;
-    x += advance + LETTER_GAP;
+    // Measure the ink at pen position 0. Path coords are linear in the
+    // pen position, so re-rendering at pen (x - bb.x1) lands the ink's
+    // left edge exactly at the cursor.
+    let probe: opentype.Path;
+    try {
+      probe = glyph.getPath(0, 0, SIZE);
+    } catch {
+      continue;
+    }
+    const bb = probe.getBoundingBox();
+    const inkW = bb.x2 - bb.x1;
+    if (!(inkW > 0)) continue; // empty glyph — no ink, no gap
+    combined.extend(glyph.getPath(x - bb.x1, 0, SIZE));
+    x += inkW + LETTER_GAP;
   }
   return combined;
 }
