@@ -41,6 +41,7 @@ import {
   cellExtractRect,
 } from "./constants";
 import type { GlyphPath, MarkerSet } from "./process-scan";
+import { parseSvgPath } from "./build-font";
 
 // ---------------------------------------------------------------------
 //  Tunables — MUST MATCH process-scan.ts
@@ -121,11 +122,40 @@ async function traceGlyphClient(
     posterizationalgorithm: 0,
   });
   // pathonly:true → array of "M..." subpath strings (the wrapper splits
-  // the combined path at M commands). Rejoining restores the exact
-  // single-path content node-potrace emits server-side.
+  // the combined path at M commands).
   const paths = Array.isArray(result) ? result : [result];
   const joined = paths.join("").trim();
-  return joined.length > 3 ? joined : null;
+  if (joined.length <= 3) return null;
+  // CRITICAL: pathonly strips the SVG group transform native potrace
+  // wraps its paths in — `translate(0,H) scale(0.1,-0.1)` — so the raw
+  // coordinates are 10× the bitmap size with y measured UP from the
+  // bitmap bottom. node-potrace (server) emits top-left-origin pixel
+  // coordinates directly. Without re-applying the transform every glyph
+  // came out ~10× larger than its advance width and vertically mirrored
+  // — the preview grid showed giant strips painting across whole rows.
+  // Re-apply it here so the client path is numerically identical to the
+  // server's for the same bitmap. (Verified against the server build on
+  // the calibration scan: advance, ink box, and baseline offsets match.)
+  return potraceRawToPixelSpace(joined, h);
+}
+
+/** Re-apply potrace's stripped `translate(0,H) scale(0.1,-0.1)` group
+ *  transform: x → x/10, y → H − y/10. Emits absolute M/L/C/Q/Z — the
+ *  same dialect node-potrace produces server-side — so parseSvgPath
+ *  sees identical input on both pipelines. */
+function potraceRawToPixelSpace(d: string, heightPx: number): string {
+  const cmds = parseSvgPath(d);
+  const tx = (x: number) => Math.round(x * 0.1 * 100) / 100;
+  const ty = (y: number) => Math.round((heightPx - y * 0.1) * 100) / 100;
+  let out = "";
+  for (const c of cmds) {
+    if (c.type === "Z") {
+      out += "Z ";
+      continue;
+    }
+    out += `${c.type} ${c.points.map(([x, y]) => `${tx(x)} ${ty(y)}`).join(" ")} `;
+  }
+  return out.trim();
 }
 
 // ---------------------------------------------------------------------

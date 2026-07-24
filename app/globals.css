@@ -560,6 +560,10 @@ p {
   border-right: 1px solid var(--fg);
   border-bottom: 1px solid var(--fg);
   color: var(--fg);
+  /* Glyph ink can extend past its advance width (negative side bearings,
+     trace artifacts). Clip so one pathological glyph can't paint across
+     the whole grid row. */
+  overflow: hidden;
 }
 
 .preview-cell-missing {

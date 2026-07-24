@@ -733,8 +733,10 @@ type ParsedCmd =
 /**
  * Parse SVG path data into a normalized command list.
  * Handles potrace's output which is M, m, L, l, C, c, Q, q, T, t, S, s, V, v, H, h, Z.
+ * Exported for process-scan.client.ts, which re-applies the SVG group
+ * transform that esm-potrace-wasm's `pathonly` mode strips.
  */
-function parseSvgPath(d: string): ParsedCmd[] {
+export function parseSvgPath(d: string): ParsedCmd[] {
   const tokens = d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g) ?? [];
   const cmds: ParsedCmd[] = [];
   let i = 0;
