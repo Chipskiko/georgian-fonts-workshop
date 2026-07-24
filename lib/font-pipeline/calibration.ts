@@ -49,17 +49,12 @@ const SPECIAL_SHAPES: Record<number, ShapeKind> = {
   // Cells 32, 33, 34, 35 are empty (alphabet only has 33)
 };
 
-export async function generateCalibrationSvg(): Promise<string> {
-  const w = TARGET_W;
-  const h = TARGET_H;
+/** SVG for the 6 registration markers — 4 corners + mid-top + mid-bottom.
+ *  Must match the template exactly so marker detection finds them in the
+ *  same positions. Nested squares: outer black frame + inner white cutout
+ *  + center dot. Shared with the hand-drawn simulation scan. */
+export function markersSvg(): string {
   const parts: string[] = [];
-  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`);
-  parts.push(`<rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"/>`);
-
-  // 6 registration markers — 4 corners + mid-top + mid-bottom. Must match
-  // the template exactly so the marker-detection logic finds them in the
-  // same positions. Nested squares design: outer black frame + inner white
-  // cutout + center dot.
   const ms = MARKER_SIZE * PT_TO_PX;
   const innerCutoutPx = 14 * PT_TO_PX;
   const dotPx = 5 * PT_TO_PX;
@@ -81,6 +76,44 @@ export async function generateCalibrationSvg(): Promise<string> {
     const y = (A4_H_PT - r.y - MARKER_SIZE) * PT_TO_PX;
     drawMarker(x, y);
   }
+  return parts.join("");
+}
+
+/** SVG for the QR code in its reserved cell — same content and placement
+ *  as the printed template. Shared with the hand-drawn simulation scan. */
+export async function qrCellSvg(): Promise<string> {
+  const parts: string[] = [];
+  const qrMatrix = await QRCode.create(TEMPLATE_QR_URL, { errorCorrectionLevel: "M" });
+  const qrLayout = cellLayoutPt(QR_CELL_INDEX);
+  const qrCellXPx = qrLayout.cellX * PT_TO_PX;
+  const qrCellYPx = (A4_H_PT - qrLayout.cellY - qrLayout.cellH) * PT_TO_PX;
+  const qrCellWPx = qrLayout.cellW * PT_TO_PX;
+  const qrCellHPx = qrLayout.cellH * PT_TO_PX;
+  const qrInsetPx = 10 * PT_TO_PX;
+  const qrSizePx = Math.min(qrCellWPx, qrCellHPx) - qrInsetPx * 2;
+  const moduleSizePx = qrSizePx / qrMatrix.modules.size;
+  const qrOriginX = qrCellXPx + (qrCellWPx - qrSizePx) / 2;
+  const qrOriginY = qrCellYPx + (qrCellHPx - qrSizePx) / 2;
+  for (let r = 0; r < qrMatrix.modules.size; r++) {
+    for (let c = 0; c < qrMatrix.modules.size; c++) {
+      if (!qrMatrix.modules.get(r, c)) continue;
+      parts.push(
+        `<rect x="${(qrOriginX + c * moduleSizePx).toFixed(2)}" y="${(qrOriginY + r * moduleSizePx).toFixed(2)}" ` +
+        `width="${moduleSizePx.toFixed(2)}" height="${moduleSizePx.toFixed(2)}" fill="${SHAPE_BLACK}"/>`,
+      );
+    }
+  }
+  return parts.join("");
+}
+
+export async function generateCalibrationSvg(): Promise<string> {
+  const w = TARGET_W;
+  const h = TARGET_H;
+  const parts: string[] = [];
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`);
+  parts.push(`<rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"/>`);
+
+  parts.push(markersSvg());
 
   // For each alphabet cell, draw a DIAGNOSTIC pattern designed to make
   // pipeline bugs immediately visible in the cells debug view:
@@ -126,26 +159,7 @@ export async function generateCalibrationSvg(): Promise<string> {
 
   // QR code in the same empty cell as the template — keeps the calibration
   // image equivalent to a freshly-printed template.
-  const qrMatrix = await QRCode.create(TEMPLATE_QR_URL, { errorCorrectionLevel: "M" });
-  const qrLayout = cellLayoutPt(QR_CELL_INDEX);
-  const qrCellXPx = qrLayout.cellX * PT_TO_PX;
-  const qrCellYPx = (A4_H_PT - qrLayout.cellY - qrLayout.cellH) * PT_TO_PX;
-  const qrCellWPx = qrLayout.cellW * PT_TO_PX;
-  const qrCellHPx = qrLayout.cellH * PT_TO_PX;
-  const qrInsetPx = 10 * PT_TO_PX;
-  const qrSizePx = Math.min(qrCellWPx, qrCellHPx) - qrInsetPx * 2;
-  const moduleSizePx = qrSizePx / qrMatrix.modules.size;
-  const qrOriginX = qrCellXPx + (qrCellWPx - qrSizePx) / 2;
-  const qrOriginY = qrCellYPx + (qrCellHPx - qrSizePx) / 2;
-  for (let r = 0; r < qrMatrix.modules.size; r++) {
-    for (let c = 0; c < qrMatrix.modules.size; c++) {
-      if (!qrMatrix.modules.get(r, c)) continue;
-      parts.push(
-        `<rect x="${(qrOriginX + c * moduleSizePx).toFixed(2)}" y="${(qrOriginY + r * moduleSizePx).toFixed(2)}" ` +
-        `width="${moduleSizePx.toFixed(2)}" height="${moduleSizePx.toFixed(2)}" fill="${SHAPE_BLACK}"/>`,
-      );
-    }
-  }
+  parts.push(await qrCellSvg());
 
   parts.push(`</svg>`);
   return parts.join("");
