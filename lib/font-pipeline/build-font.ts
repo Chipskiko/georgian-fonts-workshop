@@ -145,6 +145,25 @@ export function buildFont(
     || stripToAscii(meta.familyName)
     || "GeorgianWorkshopFont";
 
+  // UNIQUE ASCII internal identity. This single string drives the CFF
+  // FontName AND Name ID 6 (PostScript name) on EVERY platform, so the
+  // font is spec-compliant and installs on Windows.
+  //
+  // Why the random suffix matters for Windows: the PostScript name is
+  // the OS's unique key for a font. Two participants who both name
+  // their font "28" would otherwise both get PS name "28Regular" →
+  // Windows treats them as the SAME font, so the second one collides
+  // with / overwrites the first on install (the "duplicated fonts /
+  // won't install" bug). The suffix guarantees per-upload uniqueness.
+  //
+  // Pre-fix, this suffix was applied ONLY to the Macintosh name
+  // records while Windows/Unicode kept the non-unique, non-matching
+  // construction-time value — a PostScript-name mismatch across
+  // platforms that macOS/CoreText tolerated but Windows' installer
+  // rejected outright.
+  const uniqueTag = Math.random().toString(36).slice(2, 8).padStart(6, "0");
+  const psBase = `${asciiBase}-${uniqueTag}`;
+
   // opentype.js's TypeScript declarations are incomplete: weightClass
   // is typed as string but the OS/2 writer reads it as a number, and
   // panose is not declared at all but IS read at runtime (see
@@ -152,10 +171,11 @@ export function buildFont(
   // pass the runtime-correct shape.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fontOptions: any = {
-    // ASCII internal name — drives CFF FontName + Name ID 6
-    // (postScriptName). Display names get reverted to Georgian
+    // Unique ASCII identity — drives CFF FontName + Name ID 6
+    // (PostScript name) consistently across all platforms. User-
+    // visible display names get set to the Georgian original
     // post-construction (see below).
-    familyName: asciiBase,
+    familyName: psBase,
     styleName: "Regular",
     designer: meta.designerName ?? "Workshop",
     unitsPerEm: UNITS_PER_EM,
@@ -225,60 +245,56 @@ export function buildFont(
     tables.os2.usWinDescent = -DESCENDER;
   }
 
-  // Macintosh table backfill. opentype.js writes name records for
-  // three platforms — Unicode, Windows (UTF-16), Macintosh (Mac
-  // Roman). Mac Roman is a 256-char Latin set with NO Georgian, so
-  // for a Georgian-named font opentype.js silently OMITS the mac
-  // entries rather than transliterating. CoreText reads the
-  // Macintosh table during font registration; without entries there
-  // it refuses to register the font and the @font-face falls back to
-  // Times. Populate mac entries with an ASCII transliteration.
+  // NAME TABLE — the two-identity model, applied CONSISTENTLY across
+  // every platform:
   //
-  // The PostScript name field is REQUIRED to be globally unique per
-  // the OpenType spec — when two installed fonts share one, CoreText
-  // registers only the first and the second silently fails. Append a
-  // short random tag so multiple Georgian-named fonts don't collide.
-  // Pre-fix this tag was also the only ASCII identifier in the whole
-  // font (Name ID 6 + CFF FontName were both Georgian and got OTS-
-  // rejected by Chrome/Edge). Now `asciiBase` carries the readable
-  // transliteration into Name ID 6 + CFF, and the mac entries still
-  // get their random suffix for uniqueness across uploads.
-  const macUnique = Math.random().toString(36).slice(2, 8).padStart(6, "0");
-  const macFamily = `${asciiBase}-${macUnique}`;
+  //   • INTERNAL identity  → Name ID 6 (PostScript), Name ID 3
+  //     (Unique ID), and the CFF FontName. Must be ASCII, unique, and
+  //     IDENTICAL on every platform. Constructed from `psBase` (see
+  //     above), so opentype.js already wrote the matching value to all
+  //     three platforms' Name ID 6 + the CFF FontName. We MUST NOT
+  //     overwrite Name ID 6 with a platform-specific value here — that
+  //     mismatch is exactly what made Windows reject the font.
+  //
+  //   • DISPLAY identity   → Name ID 1 (Family), Name ID 2 (Subfamily),
+  //     Name ID 4 (Full), Name ID 16 (Preferred Family). User-visible
+  //     labels; may be non-ASCII. Set to the Georgian name the
+  //     participant typed so font menus / the workshop UI show it.
+  //
+  // opentype.js emits records for three platforms — Unicode, Windows
+  // (UTF-16), and Macintosh (Mac Roman). Mac Roman has no Georgian, so
+  // for a Georgian family name opentype.js omits the mac DISPLAY
+  // records; CoreText then refuses to register the font (@font-face
+  // falls back to Times). We backfill every platform's display records
+  // — Windows/Unicode with the real Georgian string, Macintosh with an
+  // ASCII transliteration (so CoreText still registers it) — while
+  // leaving Name ID 6 as the unique ASCII everywhere.
+  const displayName = meta.familyName;
+  const displayFull = `${displayName} Regular`;
+  const macDisplay = asciiBase; // Mac Roman-safe fallback label
+  const uniqueId = `Xarafontinator: ${psBase} Regular`;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const names = font.names as any;
-  names.macintosh = names.macintosh ?? {};
-  names.macintosh.fontFamily = { en: macFamily };
-  names.macintosh.fullName = { en: `${macFamily} Regular` };
-  names.macintosh.postScriptName = { en: `${macFamily}-Regular` };
-  names.macintosh.uniqueID = { en: `: ${macFamily} Regular` };
 
-  // Restore the Georgian display name to the unicode + windows
-  // tables. opentype.js wrote `asciiBase` (the transliteration) into
-  // these because that's what we passed as `familyName` — but
-  // Name ID 1 (fontFamily) and Name ID 4 (fullName) are USER-VISIBLE
-  // labels, not internal identifiers. The spec allows non-ASCII here
-  // and OTS doesn't validate them strictly. Putting the original
-  // Georgian string back means font pickers / OS font menus / the
-  // workshop UI display the name the participant actually typed.
-  //
-  // Crucially we do NOT touch Name ID 6 (postScriptName) here — that
-  // stays as the ASCII transliteration so the font binary remains
-  // spec-compliant and OTS-acceptable. Same goes for the CFF Name
-  // INDEX FontName, which is baked at construction time from the
-  // constructor's `familyName` option (asciiBase) and not reachable
-  // through the name table after the fact.
-  if (meta.familyName !== asciiBase) {
-    const displayFullName = `${meta.familyName} Regular`;
-    names.unicode = names.unicode ?? {};
-    names.unicode.fontFamily = { en: meta.familyName };
-    names.unicode.fullName = { en: displayFullName };
-    names.unicode.preferredFamily = { en: meta.familyName };
-    names.windows = names.windows ?? {};
-    names.windows.fontFamily = { en: meta.familyName };
-    names.windows.fullName = { en: displayFullName };
-    names.windows.preferredFamily = { en: meta.familyName };
+  // Windows + Unicode: Georgian display, unique-ASCII internal.
+  for (const scope of ["windows", "unicode"] as const) {
+    names[scope] = names[scope] ?? {};
+    names[scope].fontFamily = { en: displayName };
+    names[scope].fullName = { en: displayFull };
+    names[scope].preferredFamily = { en: displayName };
+    names[scope].uniqueID = { en: uniqueId };
+    // Name ID 6 (postScriptName) intentionally left as constructed
+    // (psBase-Regular) — do not touch.
   }
+
+  // Macintosh: ASCII display (Mac Roman can't hold Georgian), same
+  // unique-ASCII internal identity. Name ID 6 left as constructed.
+  names.macintosh = names.macintosh ?? {};
+  names.macintosh.fontFamily = { en: macDisplay };
+  names.macintosh.fullName = { en: `${macDisplay} Regular` };
+  names.macintosh.preferredFamily = { en: macDisplay };
+  names.macintosh.uniqueID = { en: uniqueId };
 
   // OPTICAL KERNING: with all glyphs assembled, compute per-pair kern
   // values from each glyph's edge profile (right edge of left glyph
