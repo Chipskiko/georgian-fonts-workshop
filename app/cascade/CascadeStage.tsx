@@ -9,14 +9,6 @@ import { uploadPoster } from "../posterizer/actions";
 const ALPHABET = "ა ბ გ დ ე ვ ზ თ ი კ ლ მ ნ ო პ ჟ რ ს ტ უ ფ ქ ღ ყ შ ჩ ც ძ წ ჭ ხ ჯ ჰ".split(" ");
 const ALPHABET_SET = new Set(ALPHABET);
 
-// Optional QWERTY → Georgian fallback. If user is on a Latin keyboard layout,
-// a→ა, b→ბ, etc., so they can still play without switching keyboards.
-const QWERTY_TO_GEORGIAN: Record<string, string> = {
-  a: "ა", b: "ბ", c: "ც", d: "დ", e: "ე", f: "ფ", g: "გ", h: "ჰ",
-  i: "ი", j: "ჯ", k: "კ", l: "ლ", m: "მ", n: "ნ", o: "ო", p: "პ",
-  q: "ქ", r: "რ", s: "ს", t: "ტ", u: "უ", v: "ვ", w: "წ", x: "ხ",
-  y: "ყ", z: "ზ",
-};
 
 // A4 portrait. Screen units == physics units (no scaling).
 // Print PNG output is computed at 150 DPI based on A4 mm dimensions.
@@ -108,14 +100,20 @@ const DEFAULT_FG = "#ff10b8"; // fluo pink (matches CSS --bg)
 const RANDOM_FONT_ID = "__random__";
 
 // Reverse of the GEORGIAN_TO_LATIN mapping in lib/font-pipeline/build-font.ts.
-// Used by the font picker preview: workshop fonts only contain Georgian
-// glyphs (the cmap maps U+10D0–U+10FF), so a Latin-named font like "kiko"
-// can't display its own name in its own letterforms (the font has no
-// "k"/"i"/"o" glyphs). Transliterating "kiko" → "კიკო" lets the font
-// render its own name as a visual preview.
+// Two uses:
+//   1. Font-picker preview — workshop fonts only contain Georgian glyphs
+//      (cmap U+10D0–U+10FF), so a Latin-named font like "kiko" renders
+//      its own name only after "kiko" → "კიკო".
+//   2. Latin-keyboard typing in poster/text mode (the QWERTY fallback):
+//      a user on a Latin layout types Georgian without switching keyboards.
 //
-// Capital letters disambiguate the aspirated/ejective pairs the same way
-// the forward mapping does (T→თ vs t→ტ, etc).
+// CASE MATTERS: the aspirated/ejective pairs are distinguished by shift —
+// T→თ vs t→ტ, C→ჩ vs c→ც, S→შ vs s→ს, R→ღ vs r→რ, J→ჟ vs j→ჯ, Z→ძ vs
+// z→ზ, W→ჭ vs w→წ. Callers look up the exact char FIRST, then fall back
+// to the lowercased char, so e.g. B still yields ბ while C yields ჩ.
+// (This map used to have a lowercase-only twin, QWERTY_TO_GEORGIAN, that
+// the typing handlers used with toLowerCase() — which made თ ჟ ღ შ ჩ ძ ჭ
+// untypeable. Consolidated here so the two can't drift again.)
 const LATIN_TO_GEORGIAN: Record<string, string> = {
   a: "ა", b: "ბ", g: "გ", d: "დ", e: "ე",
   v: "ვ", z: "ზ", T: "თ", i: "ი", k: "კ",
@@ -1114,7 +1112,9 @@ export function CascadeStage({
     if (savingInFlightRef.current) return false;
     let ch = rawCh;
     if (ch.length === 1 && !ALPHABET_SET.has(ch)) {
-      ch = QWERTY_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
+      // Exact-case first (C→ჩ), then lowercased fallback (B→ბ). Keeps the
+      // shift-only letters (თ ჟ ღ შ ჩ ძ ჭ) typable on a Latin keyboard.
+      ch = LATIN_TO_GEORGIAN[ch] ?? LATIN_TO_GEORGIAN[ch.toLowerCase()] ?? ch;
     }
     if (!ALPHABET_SET.has(ch)) return false;
     let fontId: string | null = currentFontIdRef.current ?? allFontsRef.current[0]?.id ?? null;
@@ -2816,7 +2816,8 @@ export function CascadeStage({
                   !e.metaKey &&
                   !e.altKey
                 ) {
-                  const mapped = QWERTY_TO_GEORGIAN[e.key.toLowerCase()];
+                  const mapped =
+                    LATIN_TO_GEORGIAN[e.key] ?? LATIN_TO_GEORGIAN[e.key.toLowerCase()];
                   if (mapped) {
                     e.preventDefault();
                     const input = e.currentTarget;
