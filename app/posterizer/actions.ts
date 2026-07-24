@@ -34,7 +34,10 @@ export async function uploadPoster(
   if (file.size > MAX_BYTES) {
     return { ok: false, message: `ფაილი ძალიან დიდია (მაქს ${MAX_BYTES / 1024 / 1024}MB)` };
   }
-  if (file.type && !ALLOWED_MIMES.has(file.type)) {
+  // Require a known image MIME outright — an empty content-type used to
+  // skip this check entirely, letting scripted uploads store arbitrary
+  // bytes as "posters".
+  if (!ALLOWED_MIMES.has(file.type)) {
     return { ok: false, message: "უნდა იყოს PNG ან JPG" };
   }
 

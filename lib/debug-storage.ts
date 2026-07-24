@@ -147,8 +147,9 @@ async function deleteBlobByUrl(url: string): Promise<void> {
 }
 
 async function sweepBlob(): Promise<number> {
-  const { del, list } = await import("@vercel/blob");
-  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  const { del } = await import("@vercel/blob");
+  const { listAllBlobs } = await import("./blob-list-all");
+  const blobs = await listAllBlobs(BLOB_PREFIX);
   const cutoff = Date.now() - DEBUG_TTL_MS;
   const toDelete: string[] = [];
   for (const b of blobs) {

@@ -327,9 +327,12 @@ export function buildFont(
 /** Re-parse the just-built font and verify all the cross-platform-
  *  critical fields are present and sane. Throws on hard problems
  *  (missing tables, broken cmap); warns on soft problems
- *  (suboptimal OS/2 values). The caller swallows the throw and just
- *  logs — we don't want validation regressions to block user uploads. */
-function validateFontBytes(bytes: Uint8Array, familyName: string): void {
+ *  (suboptimal OS/2 values). The build caller swallows the throw and
+ *  just logs — we don't want validation regressions to block user
+ *  uploads. Also exported for saveFontFromPreview, where it runs as a
+ *  HARD gate: the action receives client-supplied base64 that must
+ *  actually be one of our built fonts, not arbitrary bytes. */
+export function validateFontBytes(bytes: Uint8Array, familyName: string): void {
   const parsed = opentype.parse(
     bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
   );
@@ -366,7 +369,24 @@ function validateFontBytes(bytes: Uint8Array, familyName: string): void {
     throw new Error(`Mac name table missing fontFamily (familyName=${familyName})`);
   }
 
-  // 4. OS/2 sanity. Soft warnings — won't block.
+  // 4. At least one glyph must actually have ink. A scan where every
+  // cell failed the stddev/trace guards would otherwise build a fully
+  // blank-but-installable font (cmap maps all 33 letters to empty
+  // glyphs, so check 2 passes). The preview page already treats such
+  // fonts as broken; refuse to store them at all.
+  let hasInk = false;
+  for (let gi = 0; gi < parsed.glyphs.length; gi++) {
+    const p = parsed.glyphs.get(gi)?.path;
+    if (p && p.commands.length > 2) {
+      hasInk = true;
+      break;
+    }
+  }
+  if (!hasInk) {
+    throw new Error(`font has no inked glyphs (familyName=${familyName})`);
+  }
+
+  // 5. OS/2 sanity. Soft warnings — won't block.
   const os2 = tables.os2;
   if (os2.usWeightClass !== 400) {
     console.warn(`[buildFont] usWeightClass=${os2.usWeightClass} expected 400 (${familyName})`);
@@ -756,6 +776,13 @@ export function parseSvgPath(d: string): ParsedCmd[] {
     } else {
       // Implicit repeat of previous command (M→L, m→l)
       cmd = lastCmd === "M" ? "L" : lastCmd === "m" ? "l" : lastCmd;
+      // Z takes no arguments, so a number can't repeat it (and with no
+      // previous command there's nothing to repeat) — consume the stray
+      // token instead of looping on it forever.
+      if (cmd === "Z" || cmd === "z" || cmd === "") {
+        i++;
+        continue;
+      }
     }
     lastCmd = cmd;
 
@@ -835,7 +862,11 @@ export function parseSvgPath(d: string): ParsedCmd[] {
         break;
       }
       default:
-        // unsupported (e.g., A — arc); skip its args. Potrace doesn't emit arcs so this is rare.
+        // Unsupported command (e.g., A — arc) or a stray number after Z
+        // (implicit-repeat of Z reads nothing). Either way the token
+        // must be consumed or the loop never advances — crafted input
+        // like "M0 0 L1 1 Z 5 5" used to spin forever.
+        i++;
         break;
     }
   }

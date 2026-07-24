@@ -167,3 +167,63 @@ export function cellExtractRect(i: number, insetPt = 0): {
   const h = Math.round(box.h * PT_TO_CANONICAL_PX) - insetPx * 2;
   return { x, y, w, h };
 }
+
+// ---------------------------------------------------------------------
+//  Upside-down (180°-rotated) scan detection — shared by both pipelines
+// ---------------------------------------------------------------------
+
+/** Georgian: "The scan looks upside down — rotate it and try again." */
+export const UPSIDE_DOWN_MESSAGE =
+  "სკანი თავდაყირა ჩანს — გადააბრუნე და სცადე თავიდან";
+
+const QR_CANONICAL_CELL = 33; // the printed QR lives here (see template.ts)
+const QR_MIRROR_CELL = 2; // 180°-opposite of cell 33 in the 6×6 grid
+// Horizontal black/white transitions per 1000px of cell area. Measured
+// on the real template: the QR cell scores ~33, any drawn letter ≤12,
+// empty cells ~3. A threshold of 20 sits with an ~8-point margin on
+// both sides, so a busy letter can't read as a QR (no false positive)
+// and a dim photo that dulls the QR just fails to detect (no regression).
+const QR_TRANSITION_MIN = 20;
+
+/** Horizontal-transition density of one canonical cell — high for the
+ *  dense QR pattern, low for sparse letterforms. */
+function cellTransitionScore(gray: Uint8Array, width: number, idx: number): number {
+  const { x, y, w, h } = cellExtractRect(idx, 0);
+  let trans = 0;
+  for (let row = 0; row < h; row++) {
+    const base = (y + row) * width + x;
+    let prev = gray[base] < 128 ? 1 : 0;
+    for (let col = 1; col < w; col++) {
+      const b = gray[base + col] < 128 ? 1 : 0;
+      if (b !== prev) trans++;
+      prev = b;
+    }
+  }
+  return (trans / (w * h)) * 1000;
+}
+
+/**
+ * Detect a 180°-rotated scan. The 6-marker registration layout (4
+ * corners + mid-top/mid-bottom) is exactly 180°-symmetric, so marker
+ * detection, collinearity, midpoint and aspect checks, and the
+ * homography all accept an upside-down photo — then every cell receives
+ * a DIFFERENT cell's content rotated 180° and the pipeline silently
+ * emits a garbage font with no error. The QR code is the one asymmetric
+ * landmark: detect it by transition density and, if it sits in the
+ * mirror position (cell 2) instead of its home (cell 33), the page is
+ * flipped. Runs on the canonical-size grayscale buffer both pipelines
+ * produce after warp, so server and client decide identically.
+ *
+ * Deliberately conservative — only fires when the mirror cell is
+ * unambiguously QR-dense AND the home cell is not — because a false
+ * positive would reject a perfectly good upright scan.
+ */
+export function isScanUpsideDown(gray: Uint8Array, width: number): boolean {
+  const atHome = cellTransitionScore(gray, width, QR_CANONICAL_CELL);
+  const atMirror = cellTransitionScore(gray, width, QR_MIRROR_CELL);
+  return (
+    atMirror > QR_TRANSITION_MIN &&
+    atHome < QR_TRANSITION_MIN &&
+    atMirror > atHome * 2
+  );
+}

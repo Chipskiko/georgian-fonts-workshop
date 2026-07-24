@@ -39,6 +39,8 @@ import {
   CANONICAL_H,
   PT_TO_CANONICAL_PX,
   cellExtractRect,
+  isScanUpsideDown,
+  UPSIDE_DOWN_MESSAGE,
 } from "./constants";
 import type { GlyphPath, MarkerSet } from "./process-scan";
 import { parseSvgPath } from "./build-font";
@@ -173,7 +175,33 @@ type DecodedImage = {
  *  createImageBitmap (applies EXIF orientation by default — the
  *  browser equivalent of sharp's .rotate() — and decodes off the main
  *  thread). Falls back to <img> + decode() for older Safari. */
+/** iOS Safari has historically zeroed out getImageData on canvases
+ *  larger than 16,777,216 px² (4096²) — a 24 MP iPhone photo (5712×4284
+ *  ≈ 24.5 M px) would silently produce an all-black grayscale and fail
+ *  marker detection on-device while the same file works server-side.
+ *  Cap with margin; the canonical working size is only 2100 px wide, so
+ *  downscaling the source this early costs nothing. */
+const MAX_CANVAS_AREA = 15_500_000;
+
 async function decodeImage(blob: Blob): Promise<DecodedImage> {
+  const decoded = await decodeImageRaw(blob);
+  const area = decoded.width * decoded.height;
+  if (area <= MAX_CANVAS_AREA) return decoded;
+  const s = Math.sqrt(MAX_CANVAS_AREA / area);
+  const w = Math.max(1, Math.floor(decoded.width * s));
+  const h = Math.max(1, Math.floor(decoded.height * s));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return decoded; // fall through — better to try than to fail here
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(decoded.source, 0, 0, w, h);
+  return { source: canvas, width: w, height: h };
+}
+
+async function decodeImageRaw(blob: Blob): Promise<DecodedImage> {
   try {
     const bmp = await createImageBitmap(blob);
     return { source: bmp, width: bmp.width, height: bmp.height };
@@ -193,10 +221,27 @@ async function decodeImage(blob: Blob): Promise<DecodedImage> {
   }
 }
 
-/** Draw the image at the given target size and return Rec.709 gamma-space
- *  luma as a single-channel Uint8Array. Canvas 2D contexts are sRGB by
- *  spec, so P3 iPhone photos are color-managed to sRGB during draw —
- *  the browser equivalent of sharp's toColourspace('srgb'). */
+// sRGB decode LUT (0..255 → linear 0..1) for the grayscale conversion.
+const SRGB_TO_LINEAR = new Float32Array(256);
+for (let v = 0; v < 256; v++) {
+  const c = v / 255;
+  SRGB_TO_LINEAR[v] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function linearToSrgb255(y: number): number {
+  const c = y <= 0.0031308 ? y * 12.92 : 1.055 * Math.pow(y, 1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(c * 255)));
+}
+
+/** Draw the image at the given target size and return Rec.709 LUMINANCE
+ *  (computed on LINEAR RGB, then re-encoded to gamma) as a single-channel
+ *  Uint8Array. This matches sharp's greyscale() — measured: rgb(255,0,0)
+ *  → 127 on both. Computing luma on gamma-encoded values instead (the
+ *  old code) diverged by up to 73 levels on saturated colors, which
+ *  could flip the high-fill detection for colored-marker drawings
+ *  between the device and server pipelines. Neutral ink (r=g=b) is
+ *  bit-identical either way. Canvas 2D contexts are sRGB by spec, so P3
+ *  iPhone photos are color-managed during draw — the browser equivalent
+ *  of sharp's toColourspace('srgb'). */
 function rasterizeGray(
   img: DecodedImage,
   targetW: number,
@@ -213,9 +258,11 @@ function rasterizeGray(
   const { data } = ctx.getImageData(0, 0, targetW, targetH);
   const gray = new Uint8Array(targetW * targetH);
   for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
-    gray[i] = Math.round(
-      0.2126 * data[p] + 0.7152 * data[p + 1] + 0.0722 * data[p + 2],
-    );
+    const y =
+      0.2126 * SRGB_TO_LINEAR[data[p]] +
+      0.7152 * SRGB_TO_LINEAR[data[p + 1]] +
+      0.0722 * SRGB_TO_LINEAR[data[p + 2]];
+    gray[i] = linearToSrgb255(y);
   }
   return gray;
 }
@@ -907,6 +954,13 @@ export async function clientProcessScan(
   onProgress?.(0.25);
 
   const warped = warpToCanonical(srcGray, layout.oriW, layout.oriH, layout.warp);
+  // Reject upside-down scans (markers are 180°-symmetric so warp accepts
+  // a flipped photo; the QR landmark disambiguates). Same check + message
+  // as the server pipeline. On throw, MakeFontForm falls back to the
+  // server action, which re-detects and surfaces the same message.
+  if (isScanUpsideDown(warped, CANONICAL_W)) {
+    throw new Error(UPSIDE_DOWN_MESSAGE);
+  }
   onProgress?.(0.4);
 
   const results: GlyphPath[] = [];

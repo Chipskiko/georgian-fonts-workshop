@@ -36,8 +36,15 @@ function toName(filename: string): { name: string; designer?: string } {
 async function _getFonts(): Promise<FontEntry[]> {
   // Font list + preview-sidecar map in parallel — both are one storage
   // list() call; the pair still runs only once per cache window.
+  // Both are guarded: getFonts() is awaited in the root layout, so an
+  // unhandled Blob rejection (revoked token, transient outage) would
+  // 500 every page on the site. Degrading to an empty list keeps the
+  // site up; the 60s cache TTL retries soon after.
   const [stored, previewUrls] = await Promise.all([
-    listFonts(),
+    listFonts().catch((e) => {
+      console.error("[getFonts] listFonts failed — serving empty list:", e);
+      return [];
+    }),
     listFontPreviewUrls().catch(() => ({}) as Record<string, string>),
   ]);
   // Carry createdAt alongside the FontEntry just inside this function

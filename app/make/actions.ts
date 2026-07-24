@@ -10,7 +10,7 @@ import {
   type DebugView,
   type DebugViewResult,
 } from "@/lib/font-pipeline/process-scan";
-import { buildFont } from "@/lib/font-pipeline/build-font";
+import { buildFont, validateFontBytes } from "@/lib/font-pipeline/build-font";
 import { saveFont } from "@/lib/font-storage";
 import { generateCalibrationPng } from "@/lib/font-pipeline/calibration";
 import {
@@ -442,6 +442,16 @@ export async function saveFontFromPreview(
 ): Promise<{ ok: boolean; message: string }> {
   if (!ttfBase64 || !requestedName) return { ok: false, message: "მონაცემები აკლია" };
   if (!requestedName.endsWith(".otf")) return { ok: false, message: "არასწორი სახელი" };
+  // requestedName normally round-trips from previewFontFromScan (already
+  // safeSegment-cleaned), but server actions are callable directly — a
+  // crafted name with e.g. `</style><script>` would otherwise be stored
+  // verbatim and later interpolated into the global @font-face <style>
+  // block (layout.tsx dangerouslySetInnerHTML) → stored XSS. Re-clean
+  // here and reject anything that changes, instead of silently renaming.
+  const base = requestedName.slice(0, -".otf".length);
+  if (base !== safeSegment(base) || base.length === 0 || base.length > 120) {
+    return { ok: false, message: "არასწორი სახელი" };
+  }
 
   let bytes: Buffer;
   try {
@@ -451,6 +461,16 @@ export async function saveFontFromPreview(
   }
   if (bytes.length === 0) return { ok: false, message: "ცარიელი შრიფტი" };
   if (bytes.length > 5 * 1024 * 1024) return { ok: false, message: "შრიფტი ძალიან დიდია" };
+
+  // Hard gate: the bytes must parse as one of our built fonts (required
+  // tables + Georgian cmap + mac names). Without this, any base64 blob
+  // POSTed at the action gets stored as a ".otf" and shows up as a
+  // permanently broken row on the fonts page.
+  try {
+    validateFontBytes(new Uint8Array(bytes), requestedName);
+  } catch {
+    return { ok: false, message: "არასწორი შრიფტის ფაილი" };
+  }
 
   // saveFont appends its own collision-safe random suffix.
   const saved = await saveFont(requestedName, bytes);

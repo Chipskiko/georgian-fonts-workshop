@@ -61,6 +61,26 @@ function layoutAlphabet(font) {
   return combined;
 }
 
+// Safe path serializer — mirror preview-svg.ts pathToSafeD. opentype's
+// own toPathData emits "NaN" when a coordinate's fractional part is
+// < 1e-6 (its roundDecimal concatenates strings: "3e-7" + "e+1"), which
+// collapsed the whole alphabet strip to one glyph. Round numerically.
+function pathToSafeD(path) {
+  const r = (v) => {
+    const n = Math.round(v * 100) / 100;
+    return Object.is(n, -0) ? "0" : String(n);
+  };
+  let d = "";
+  for (const c of path.commands) {
+    if (c.type === "M") d += `M${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "L") d += `L${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "C") d += `C${r(c.x1)} ${r(c.y1)} ${r(c.x2)} ${r(c.y2)} ${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "Q") d += `Q${r(c.x1)} ${r(c.y1)} ${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "Z") d += "Z";
+  }
+  return d;
+}
+
 function buildPreviewSvg(fontBytes) {
   let font;
   try {
@@ -76,8 +96,8 @@ function buildPreviewSvg(fontBytes) {
   } catch {
     return null;
   }
-  const d = path.toPathData(1);
-  if (!d || d.length < 4) return null;
+  const d = pathToSafeD(path);
+  if (!d || d.length < 4 || d.includes("NaN")) return null;
 
   const b = path.getBoundingBox();
   const minX = b.x1 - PAD;

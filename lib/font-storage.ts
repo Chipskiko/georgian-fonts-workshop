@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
+import { listAllBlobs } from "./blob-list-all";
 
 /**
  * Storage adapter for workshop fonts.
@@ -136,8 +137,7 @@ function dedupeFs(filename: string): string {
 // Lazy-required so dev environments without @vercel/blob can still build.
 
 async function listBlob(): Promise<StoredFont[]> {
-  const { list } = await import("@vercel/blob");
-  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  const blobs = await listAllBlobs(BLOB_PREFIX);
   return blobs
     .filter((b) => ALLOWED_EXT.has(path.extname(b.pathname).toLowerCase()))
     .map((b) => {
@@ -182,17 +182,16 @@ async function saveBlob(filename: string, bytes: Uint8Array | Buffer): Promise<S
 }
 
 async function deleteBlob(filename: string): Promise<void> {
-  const { del, list } = await import("@vercel/blob");
+  const { del } = await import("@vercel/blob");
   // Find the exact URL for this filename — Blob delete is by URL, not path
-  const { blobs } = await list({ prefix: `${BLOB_PREFIX}${filename}` });
+  const blobs = await listAllBlobs(`${BLOB_PREFIX}${filename}`);
   const target = blobs.find((b) => b.pathname === `${BLOB_PREFIX}${filename}`);
   if (!target) return;
   await del(target.url);
 }
 
 async function dedupeBlob(filename: string): Promise<string> {
-  const { list } = await import("@vercel/blob");
-  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  const blobs = await listAllBlobs(BLOB_PREFIX);
   const taken = new Set(blobs.map((b) => b.pathname.replace(BLOB_PREFIX, "")));
   if (!taken.has(filename)) return filename;
   const ext = path.extname(filename);
@@ -230,9 +229,9 @@ async function savePreviewSidecar(fontFilename: string, svg: string): Promise<vo
 
 async function deletePreviewSidecar(fontFilename: string): Promise<void> {
   if (useBlob()) {
-    const { del, list } = await import("@vercel/blob");
+    const { del } = await import("@vercel/blob");
     const target = `${BLOB_PREFIX}${fontFilename}${PREVIEW_SUFFIX}`;
-    const { blobs } = await list({ prefix: target });
+    const blobs = await listAllBlobs(target);
     const hit = blobs.find((b) => b.pathname === target);
     if (hit) await del(hit.url);
   } else {
@@ -246,8 +245,7 @@ async function deletePreviewSidecar(fontFilename: string): Promise<void> {
 export async function listFontPreviewUrls(): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   if (useBlob()) {
-    const { list } = await import("@vercel/blob");
-    const { blobs } = await list({ prefix: BLOB_PREFIX });
+    const blobs = await listAllBlobs(BLOB_PREFIX);
     for (const b of blobs) {
       if (!b.pathname.endsWith(PREVIEW_SUFFIX)) continue;
       const fontFilename = b.pathname

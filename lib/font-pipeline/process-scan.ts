@@ -12,6 +12,8 @@ import {
   CANONICAL_H,
   PT_TO_CANONICAL_PX,
   cellExtractRect,
+  isScanUpsideDown,
+  UPSIDE_DOWN_MESSAGE,
 } from "./constants";
 
 // Re-export so existing importers of cellExtractRect from this module
@@ -310,6 +312,13 @@ export async function processScan(buffer: Buffer): Promise<GlyphPath[]> {
   //    Instead we keep grayscale and threshold per cell after a local
   //    lighting fix (see below).
   const warped = await warpToCanonical(buffer, layout.warp);
+
+  // 1b. Reject upside-down scans. The marker layout is 180°-symmetric so
+  //     detection/warp accept a flipped photo and would otherwise emit a
+  //     garbage font silently; the QR landmark disambiguates.
+  if (isScanUpsideDown(new Uint8Array(warped.data), warped.width)) {
+    throw new Error(UPSIDE_DOWN_MESSAGE);
+  }
 
   // 2. Cell crop via the single-source-of-truth helper. CROP_INSET_PT keeps
   //    the printed cell-border line out of each glyph.

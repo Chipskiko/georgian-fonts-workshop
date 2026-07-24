@@ -29,8 +29,10 @@ import { ALPHABET } from "./constants";
  *  caches aggressively (~30 days) and regenerations reuse the same
  *  URL, so without the version bump users would see stale previews.
  *    v1: two-line layout, metric advances
- *    v2: single line, optical ink-edge spacing */
-export const PREVIEW_SVG_VERSION = 2;
+ *    v2: single line, optical ink-edge spacing
+ *    v3: safe path serializer (opentype toPathData emitted NaN for some
+ *        fonts, collapsing the whole strip to one glyph) */
+export const PREVIEW_SVG_VERSION = 3;
 
 /** Font size (SVG units) the alphabet is rendered at. Purely internal —
  *  the SVG scales to its container via viewBox. */
@@ -87,6 +89,35 @@ function layoutAlphabet(font: opentype.Font): opentype.Path {
   return combined;
 }
 
+/** Serialize a path to SVG `d` with a safe number formatter.
+ *
+ *  opentype.js's own Path.toPathData is unusable here: its roundDecimal
+ *  builds the rounded value by STRING concatenation —
+ *  `Math.round(decimalPart + "e+" + places)` — so when a coordinate's
+ *  fractional part is < 1e-6 (which JS stringifies in exponential form,
+ *  e.g. "3e-7"), the concat becomes the invalid literal "3e-7e+1" and
+ *  yields NaN. The optical layout translates every glyph by `x - bb.x1`,
+ *  which for some fonts lands a control point within 1e-6 of an integer
+ *  — one "NaN" in the middle of the path makes SVG renderers abort the
+ *  rest of it, so the whole alphabet strip collapsed to a single glyph
+ *  (the font itself was fine; only this preview string was corrupt).
+ *  Rounding numerically (never via string concat) sidesteps it. */
+function pathToSafeD(path: opentype.Path): string {
+  const r = (v: number) => {
+    const n = Math.round(v * 100) / 100;
+    return Object.is(n, -0) ? "0" : String(n);
+  };
+  let d = "";
+  for (const c of path.commands) {
+    if (c.type === "M") d += `M${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "L") d += `L${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "C") d += `C${r(c.x1)} ${r(c.y1)} ${r(c.x2)} ${r(c.y2)} ${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "Q") d += `Q${r(c.x1)} ${r(c.y1)} ${r(c.x)} ${r(c.y)}`;
+    else if (c.type === "Z") d += "Z";
+  }
+  return d;
+}
+
 /**
  * Build the preview SVG for a font binary. Returns null when the font
  * can't be parsed or produces no visible outlines (caller treats null
@@ -111,8 +142,8 @@ export function buildPreviewSvg(fontBytes: Uint8Array): string | null {
     return null;
   }
 
-  const d = path.toPathData(1);
-  if (!d || d.length < 4) return null;
+  const d = pathToSafeD(path);
+  if (!d || d.length < 4 || d.includes("NaN")) return null;
 
   const b = path.getBoundingBox();
   const minX = b.x1 - PAD;

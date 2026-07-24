@@ -12,6 +12,28 @@ function isGeorgian(s: string | undefined | null): boolean {
   return !!s && GEORGIAN_RE.test(s);
 }
 
+/** Vercel Blob serves fonts from a different origin, where browsers
+ *  ignore the <a download> attribute and just navigate to (and try to
+ *  display) the file. Fetch the bytes and download via an object URL so
+ *  the click actually saves. Falls back to opening the URL if the fetch
+ *  fails (e.g. offline). */
+async function downloadFont(url: string, filename: string): Promise<void> {
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error(`fetch ${res.status}`);
+    const blobUrl = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch {
+    window.open(url, "_blank");
+  }
+}
+
 export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string }) {
   const [open, setOpen] = useState(false);
   const nameStyle = isGeorgian(font.name)
@@ -73,7 +95,15 @@ export function FontRow({ font, alphabet }: { font: FontEntry; alphabet: string 
             {/* Restyled as a yellow button in the site's Georgian UI
                 font, matching the action buttons elsewhere on the site
                 (preview-actions, save buttons, etc). */}
-            <a className="font-download-btn" href={font.file} download>
+            <a
+              className="font-download-btn"
+              href={font.file}
+              download={font.filename}
+              onClick={(e) => {
+                e.preventDefault();
+                void downloadFont(font.file, font.filename);
+              }}
+            >
               ჩამოტვირთე
             </a>
           </div>

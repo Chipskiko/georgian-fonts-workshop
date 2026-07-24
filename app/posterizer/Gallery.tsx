@@ -75,6 +75,22 @@ function triggerDownload(href: string, downloadName: string, revokeAfter = false
   }
 }
 
+/** Per-tile color download. Vercel Blob is cross-origin, where <a
+ *  download> is ignored and the browser navigates to (displays) the
+ *  image instead of saving it — losing the gallery. Fetch → object URL
+ *  so the click saves; fall back to opening the URL if the fetch fails. */
+async function downloadColor(poster: StoredPoster): Promise<void> {
+  try {
+    const res = await fetch(poster.url, { mode: "cors" });
+    if (!res.ok) throw new Error(`fetch ${res.status}`);
+    const downloadUrl = URL.createObjectURL(await res.blob());
+    triggerDownload(downloadUrl, poster.id, true);
+  } catch (err) {
+    console.warn("[downloadColor] fetch failed, opening in new tab:", err);
+    window.open(poster.url, "_blank");
+  }
+}
+
 /** Per-tile B&W download trigger. Prefers the pre-computed _bnw blob
  *  cascade generated at save time (no client-side conversion needed).
  *  Falls back to on-the-fly canvas conversion for legacy posters
@@ -315,7 +331,15 @@ export function Gallery({ initialPosters }: { initialPosters: StoredPoster[] }) 
                 />
               </button>
               <div className="gallery-tile-meta">
-                <a href={p.url} download className="gallery-download">
+                <a
+                  href={p.url}
+                  download={p.id}
+                  className="gallery-download"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void downloadColor(p);
+                  }}
+                >
                   ჩამოტვირთე
                 </a>
                 <button

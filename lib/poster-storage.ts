@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { unstable_cache } from "next/cache";
+import { listAllBlobs } from "./blob-list-all";
 
 /** Cache tag for the poster list. Server actions that mutate posters
  *  (uploadPoster, deletePoster) call revalidateTag with this string so
@@ -195,8 +196,7 @@ async function deleteFs(filename: string): Promise<void> {
 // --- Vercel Blob adapter -------------------------------------------------
 
 async function listBlob(): Promise<StoredPoster[]> {
-  const { list } = await import("@vercel/blob");
-  const { blobs } = await list({ prefix: BLOB_PREFIX });
+  const blobs = await listAllBlobs(BLOB_PREFIX);
   // Build lookups of sidecar-name → URL so the parent-poster pass can
   // pair each full poster with its thumb + bnw partners. Single Blob
   // list call covers all three (full + thumb + bnw) — doesn't multiply
@@ -247,11 +247,11 @@ async function saveBlob(filename: string, bytes: Buffer): Promise<StoredPoster> 
 
 async function deleteBlob(filename: string): Promise<void> {
   if (!isImage(filename)) throw new Error("არ არის პოსტერის ფაილი");
-  const { del, list } = await import("@vercel/blob");
+  const { del } = await import("@vercel/blob");
   // Delete the full poster + every sidecar (thumb + bnw). Single
   // list() call with the shared timestamp prefix finds all three.
   const stem = filename.replace(/\.[^.]+$/, "");
-  const { blobs } = await list({ prefix: `${BLOB_PREFIX}${stem}` });
+  const blobs = await listAllBlobs(`${BLOB_PREFIX}${stem}`);
   const fullPath = `${BLOB_PREFIX}${filename}`;
   const thumbPath = `${BLOB_PREFIX}${fullToThumbName(filename)}`;
   const bnwPath = `${BLOB_PREFIX}${fullToBnwName(filename)}`;
