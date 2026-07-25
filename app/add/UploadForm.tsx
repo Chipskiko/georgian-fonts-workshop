@@ -36,7 +36,11 @@ export function UploadForm() {
           <input
             type="file"
             name="file"
-            accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+            // Everything is stored as OTF (see normalize-upload.ts).
+            // .woff2 is deliberately absent — it can't be decoded here
+            // and isn't installable on any desktop OS; the action still
+            // rejects it with a readable message if picked via "all files".
+            accept=".otf,.ttf,.woff,font/otf,font/ttf,font/woff"
             required
             onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
             className="file-picker-input"

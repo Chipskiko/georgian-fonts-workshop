@@ -8,6 +8,7 @@ import {
 } from "@/lib/font-storage";
 import { FONTS_LIST_TAG } from "@/lib/fonts";
 import { passwordsMatch } from "@/lib/auth";
+import { normalizeToOtf } from "@/lib/font-pipeline/normalize-upload";
 
 const ALLOWED_EXT = [".ttf", ".otf", ".woff", ".woff2"];
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -38,13 +39,21 @@ export async function uploadFont(formData: FormData): Promise<{ ok: boolean; mes
   const baseName = safeSegment(fontName || path.basename(file.name, originalExt));
   if (!baseName) return { ok: false, message: "სახელი სავალდებულოა" };
 
+  // EVERY stored font is OTF. The uploaded extension is untrusted (it
+  // can disagree with the actual container, which Windows rejects) and
+  // .woff/.woff2 aren't installable on any desktop OS at all. Coerce to
+  // a real .otf — already-CFF uploads keep their exact bytes, TrueType
+  // and WOFF get converted. See lib/font-pipeline/normalize-upload.ts.
+  const uploaded = Buffer.from(await file.arrayBuffer());
+  const norm = normalizeToOtf(uploaded);
+  if (!norm.ok) return { ok: false, message: norm.message };
+
   const cleanDesigner = safeSegment(designer);
-  const requested = cleanDesigner ? `${baseName}__${cleanDesigner}${originalExt}` : `${baseName}${originalExt}`;
+  const requested = cleanDesigner ? `${baseName}__${cleanDesigner}.otf` : `${baseName}.otf`;
 
   // saveFont appends its own collision-safe random suffix, so dedupe
   // (a non-atomic check-then-write) is no longer needed.
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const saved = await saveFont(requested, buffer);
+  const saved = await saveFont(requested, norm.bytes);
   const finalName = saved.filename;
 
   // Drop the cached font list so layout + pages see the new upload on
