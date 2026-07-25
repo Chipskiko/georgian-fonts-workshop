@@ -59,3 +59,7 @@ next-env.d.ts
 
 # Generated specimen GIF (regenerable via scripts/make-specimen-gif.mjs)
 specimen-alphabet.gif
+
+# Local-dev font uploads (FS storage adapter). Production uses Vercel Blob.
+public/fonts/*
+!public/fonts/.gitkeep
