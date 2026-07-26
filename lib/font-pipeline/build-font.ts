@@ -2,6 +2,7 @@ import * as opentype from "opentype.js";
 import type { GlyphPath } from "./process-scan";
 import { ALPHABET, ALPHABET_CODES, BASELINE_FRAC_FROM_TOP } from "./constants";
 import { computeOpticalKerning, attachKerning } from "./optical-kerning";
+import { fixSfntChecksums } from "./fix-checksums";
 
 const UNITS_PER_EM = 1000;
 // Ascender / descender are derived from where the baseline guide sits on the
@@ -307,7 +308,11 @@ export function buildFont(
   const kerningPairs = computeOpticalKerning(font);
   attachKerning(font, kerningPairs);
 
-  const bytes = new Uint8Array(font.toArrayBuffer());
+  // opentype.js writes some table checksums as negative/garbage values
+  // (signed << 24 in its computeCheckSum). Browsers and macOS ignore
+  // checksums, but Windows Font Viewer validates them and rejects the
+  // font outright — recompute them all. See fix-checksums.ts.
+  const bytes = fixSfntChecksums(new Uint8Array(font.toArrayBuffer()));
 
   // Post-build validation. Re-parse the bytes and check that the
   // critical cross-platform fields actually made it into the binary.
